@@ -97,7 +97,7 @@ struct PlayerView: View {
                     ForEach(cameraSwitches) { f in
                         Button {
                             currentFile = f
-                            model.play(url: streamURL(f))
+                            if let u = streamURL(f) { model.play(url: u) }
                         } label: {
                             CameraBadge(camera: f.cameraEnum)
                                 .padding(4)
@@ -308,7 +308,7 @@ final class PlayerModel: ObservableObject {
 
     private func tick() {
         position = Double(mediaPlayer.position)
-        let t = Int(mediaPlayer.time?.intValue ?? 0)
+        let t = Int(mediaPlayer.time.intValue)
         let rem = Int(mediaPlayer.remainingTime?.intValue ?? 0)
         timeText = Fmt.mseconds(max(0, t))
         let dur = t - rem   // remainingTime 为负值
