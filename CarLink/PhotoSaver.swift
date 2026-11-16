@@ -15,17 +15,17 @@ enum PhotoSaver {
 
     // MARK: - 授权
 
-    static func requestAddAuthorization() -> Bool {
+    /// 异步请求相册写入权限。
+    /// 重要：绝不能在主线程同步等待权限回调——首次授权时系统弹窗需要主线程，
+    /// 同步等待会造成死锁（UI 全部冻结）。必须用 async/await 挂起而非阻塞。
+    static func requestAddAuthorization() async -> Bool {
         let st = PHPhotoLibrary.authorizationStatus(for: .addOnly)
         if st == .authorized || st == .limited { return true }
-        var ok = false
-        let sem = DispatchSemaphore(value: 0)
-        PHPhotoLibrary.requestAuthorization(for: .addOnly) { s in
-            ok = (s == .authorized || s == .limited)
-            sem.signal()
+        return await withCheckedContinuation { cont in
+            PHPhotoLibrary.requestAuthorization(for: .addOnly) { s in
+                cont.resume(returning: s == .authorized || s == .limited)
+            }
         }
-        sem.wait()
-        return ok
     }
 
     // MARK: - 相簿
@@ -56,28 +56,31 @@ enum PhotoSaver {
 
     // MARK: - 保存
 
-    /// 保存文件（图片或视频）到相簿，返回 PHAsset localIdentifier
+    /// 保存文件（图片或视频）到相簿，返回 PHAsset localIdentifier。
+    /// 授权用 async 等待、相册库写操作放到后台线程，全程不阻塞主线程。
     @discardableResult
-    static func saveToAlbum(fileAt url: URL) throws -> String {
-        guard requestAddAuthorization() else { throw APIError("没有相册权限") }
-        let album = try ensureAlbum()
-        let isImage = isImageFile(url)
-        var assetId: String?
-        try PHPhotoLibrary.shared().performChangesAndWait {
-            let create = PHAssetCreationRequest.forAsset()
-            if isImage {
-                create.addResource(with: .photo, fileURL: url, options: nil)
-            } else {
-                create.addResource(with: .video, fileURL: url, options: nil)
+    static func saveToAlbum(fileAt url: URL) async throws -> String {
+        guard await requestAddAuthorization() else { throw APIError("没有相册权限") }
+        return try await Task.detached(priority: .userInitiated) { () -> String in
+            let album = try ensureAlbum()
+            let isImage = isImageFile(url)
+            var assetId: String?
+            try PHPhotoLibrary.shared().performChangesAndWait {
+                let create = PHAssetCreationRequest.forAsset()
+                if isImage {
+                    create.addResource(with: .photo, fileURL: url, options: nil)
+                } else {
+                    create.addResource(with: .video, fileURL: url, options: nil)
+                }
+                assetId = create.placeholderForCreatedAsset?.localIdentifier
+                if let placeholder = create.placeholderForCreatedAsset {
+                    let albumReq = PHAssetCollectionChangeRequest(for: album)
+                    albumReq?.addAssets([placeholder] as NSArray)
+                }
             }
-            assetId = create.placeholderForCreatedAsset?.localIdentifier
-            if let placeholder = create.placeholderForCreatedAsset {
-                let albumReq = PHAssetCollectionChangeRequest(for: album)
-                albumReq?.addAssets([placeholder] as NSArray)
-            }
-        }
-        guard let id = assetId else { throw APIError("保存到相册失败") }
-        return id
+            guard let id = assetId else { throw APIError("保存到相册失败") }
+            return id
+        }.value
     }
 
     // MARK: - 读取（本地回看）

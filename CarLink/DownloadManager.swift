@@ -259,8 +259,12 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
             item.message = "未连接车机"
             return
         }
-        // 视频请求 format=mp4（车机端转封装），截图直接下载
-        let url = api.downloadURL(path: item.file.path, format: item.file.isVideo ? "mp4" : nil)
+        // 视频请求 format=mp4（车机端转封装），截图直接下载。
+        // 版本守卫：车机端 1.1.10 之前执行 mp4 转封装会触发 32 位 stagefright
+        // 原生崩溃（整个服务进程被杀），旧版本只下载原始 TS。
+        let mp4Capable = Self.serverVersionAtLeastMp4(connection?.carInfo?.version)
+        let wantMp4 = item.file.isVideo && mp4Capable
+        let url = api.downloadURL(path: item.file.path, format: wantMp4 ? "mp4" : nil)
         var req = URLRequest(url: url)
         req.timeoutInterval = 120
         let task = DownloadEngine.shared.session.downloadTask(with: req)
@@ -271,6 +275,19 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
         task.resume()
     }
 
+    /// 服务端版本 >= 1.1.10（versionCode 12）才支持安全的 mp4 转封装
+    private static func serverVersionAtLeastMp4(_ version: String?) -> Bool {
+        let minimum = [1, 1, 10]
+        guard let v = version else { return false }
+        let parts = v.split(separator: ".").compactMap { Int($0) }
+        guard parts.count == 3 else { return false }
+        for (a, b) in zip(parts, minimum) {
+            if a > b { return true }
+            if a < b { return false }
+        }
+        return true
+    }
+
     // MARK: - 引擎回调（主线程）
 
     nonisolated func onProgress(path: String, received: Int64, total: Int64) {
@@ -278,7 +295,7 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
     }
 
     nonisolated func onFinished(path: String, tempURL: URL, response: HTTPURLResponse?) {
-        Task { @MainActor in self._onFinished(path: path, tempURL: tempURL, response: response) }
+        Task { @MainActor in await self._onFinished(path: path, tempURL: tempURL, response: response) }
     }
 
     nonisolated func onError(path: String, error: Error) {
@@ -291,7 +308,7 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
         if total > 0 { item.total = total }
     }
 
-    private func _onFinished(path: String, tempURL: URL, response: HTTPURLResponse?) {
+    private func _onFinished(path: String, tempURL: URL, response: HTTPURLResponse?) async {
         guard let item = items.first(where: { $0.id == path }) else {
             try? FileManager.default.removeItem(at: tempURL)
             return
@@ -300,24 +317,28 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
         item.task = nil
 
         let remoteFormat = response?.value(forHTTPHeaderField: "X-CarLink-Format") // mp4 | fallback-ts | nil
-        let isFallbackTS = remoteFormat == "fallback-ts"
+        let isMp4 = remoteFormat == "mp4"
 
         // 保存目标文件名：转存成功时扩展名换为 .mp4
         var finalName = item.file.name
-        if remoteFormat == "mp4", item.file.isVideo {
+        if isMp4, item.file.isVideo {
             let base = (finalName as NSString).deletingPathExtension
             finalName = base + ".mp4"
         }
 
         let saveToPhotos = UserDefaults.standard.object(forKey: "saveToPhotos") as? Bool ?? true
-        let wantPhotos = !isFallbackTS && saveToPhotos
+        // 只有服务端真正转成 mp4 才能存进相册（系统相册不支持 TS）；
+        // TS / 回退文件一律存「文件」App
+        let wantPhotos = isMp4 && saveToPhotos
 
         var kind: SavedKind = .fileTS
         var localRef: String?
 
         if wantPhotos {
+            item.message = "保存到相册…"
             do {
-                let assetId = try PhotoSaver.saveToAlbum(fileAt: tempURL)
+                // 异步保存：授权弹窗与相册写库都不阻塞主线程
+                let assetId = try await PhotoSaver.saveToAlbum(fileAt: tempURL)
                 kind = .photoAlbum
                 localRef = assetId
             } catch {
