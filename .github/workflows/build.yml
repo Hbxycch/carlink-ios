@@ -8,12 +8,12 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Show Xcode version
+      - name: Show toolchain
         run: xcodebuild -version && pod --version
 
       - name: Install xcodegen
@@ -34,17 +34,7 @@ jobs:
             -configuration Release \
             -sdk iphoneos \
             -derivedDataPath dd \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGN_ENTITLEMENTS="" \
-            AD_HOC_CODE_SIGNING_ALLOWED=YES \
-            build | xcpretty || xcodebuild \
-            -workspace CarLink.xcworkspace \
-            -scheme CarLink \
-            -configuration Release \
-            -sdk iphoneos \
-            -derivedDataPath dd \
+            -destination 'generic/platform=iOS' \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
