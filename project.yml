@@ -1,0 +1,41 @@
+name: CarLink
+options:
+  bundleIdPrefix: org.zood
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    CODE_SIGNING_ALLOWED: "NO"
+    CODE_SIGNING_REQUIRED: "NO"
+    CODE_SIGN_IDENTITY: ""
+targets:
+  CarLink:
+    type: application
+    platform: iOS
+    sources:
+      - path: CarLink
+        excludes:
+          - "Info.plist"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.zood.carlink
+        PRODUCT_NAME: CarLink
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: "NO"
+        INFOPLIST_FILE: CarLink/Info.plist
+        ENABLE_USER_SCRIPT_SANDBOXING: "YES"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+schemes:
+  CarLink:
+    build:
+      targets:
+        CarLink: all
+    run:
+      config: Debug
+    archive:
+      config: Release
