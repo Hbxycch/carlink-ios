@@ -38,7 +38,7 @@ final class LibraryStore: ObservableObject {
     /// 回退 .ts 文件目录（「文件」App › CarLink › CarLink）
     static var tsDirectory: URL {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        return docs.appending(path: "CarLink", isDirectory: true)
+        return docs.appending(path: "CarLink")
     }
 
     init() {

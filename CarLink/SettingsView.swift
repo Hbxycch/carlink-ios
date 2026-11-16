@@ -76,7 +76,7 @@ struct SettingsView: View {
     }
 
     private var aboutSection: some View {
-        Section("关于") {
+        Section {
             LabeledRow(icon: "app.badge", title: "App", value: "CarLink 车机互传")
             LabeledRow(icon: "number", title: "版本", value: "1.0.0 (1)")
             if let info = conn.carInfo {
@@ -84,6 +84,8 @@ struct SettingsView: View {
             }
             LabeledRow(icon: "checkmark.seal", title: "播放内核",
                        value: "VLC（流式）+ AVPlayer（本地）")
+        } header: {
+            Text("关于")
         } footer: {
             Text("配套车机端 App：com.zood.carlink（建议 v1.1.9 及以上，支持分类与 mp4 转存）。")
         }

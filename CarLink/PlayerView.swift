@@ -79,7 +79,7 @@ struct PlayerView: View {
                 Spacer()
                 if !libraryDownloaded {
                     Button {
-                        downloads.addOne(currentFile, target: categoryOf(currentFile))
+                        downloads.addOne(currentFile, target: .dashcam(categoryOf(currentFile)))
                     } label: {
                         Image(systemName: "arrow.down.circle")
                             .font(.title3)
@@ -152,7 +152,7 @@ struct PlayerView: View {
                 Text("/ \(model.durationText)").font(.caption.monospacedDigit()).foregroundStyle(.white.opacity(0.7))
                 Spacer()
                 Menu {
-                    ForEach([0.5, 1.0, 1.5, 2.0, 3.0], id: \.self) { r in
+                    ForEach([Float(0.5), 1.0, 1.5, 2.0, 3.0], id: \.self) { r in
                         Button {
                             model.setRate(r)
                         } label: {
@@ -308,8 +308,8 @@ final class PlayerModel: ObservableObject {
 
     private func tick() {
         position = Double(mediaPlayer.position)
-        let t = mediaPlayer.time.intValue
-        let rem = mediaPlayer.remainingTime.intValue
+        let t = Int(mediaPlayer.time?.intValue ?? 0)
+        let rem = Int(mediaPlayer.remainingTime?.intValue ?? 0)
         timeText = Fmt.mseconds(max(0, t))
         let dur = t - rem   // remainingTime 为负值
         if dur > 0 {

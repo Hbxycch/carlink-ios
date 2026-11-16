@@ -45,7 +45,7 @@ enum PhotoSaver {
         var placeholderId: String?
         try PHPhotoLibrary.shared().performChangesAndWait {
             let req = PHAssetCollectionChangeRequest.creationRequestForAssetCollection(withTitle: albumName)
-            placeholderId = req.placeholderForCreatedAssetCollection?.localIdentifier
+            placeholderId = req.placeholderForCreatedAssetCollection.localIdentifier
         }
         guard let pid = placeholderId,
               let created = PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: [pid], options: nil).firstObject else {

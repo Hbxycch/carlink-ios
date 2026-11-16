@@ -23,7 +23,7 @@ final class SettingsStore: ObservableObject {
                 self?.isWiFi = wifi
             }
         }
-        monitor.resume(queue: DispatchQueue(label: "carlink.pathmonitor"))
+        monitor.start(queue: DispatchQueue(label: "carlink.pathmonitor"))
     }
 
     var canDownload: Bool {
