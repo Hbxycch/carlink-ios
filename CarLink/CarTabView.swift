@@ -131,13 +131,13 @@ struct CarHomeView: View {
     private var quickLinks: some View {
         Section("快捷入口") {
             Button {
-                nav.filesPath = [.remoteAlbum(.loop)]
+                nav.filesJump = FileSegmentJump(segment: .remote, category: .loop)
                 nav.tab = .files
             } label: {
                 Label("浏览记录仪视频", systemImage: "square.stack.3d.up.fill")
             }
             Button {
-                nav.filesPath = [.screenshots]
+                nav.filesJump = FileSegmentJump(segment: .screenshots, category: nil)
                 nav.tab = .files
             } label: {
                 Label("浏览车机截图", systemImage: "photo.on.rectangle")

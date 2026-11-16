@@ -8,15 +8,8 @@ enum AppTab: Hashable {
 @MainActor
 final class AppNav: ObservableObject {
     @Published var tab: AppTab = .car
-    /// 文件 Tab 内部的跳转路径
-    @Published var filesPath: [FilesRoute] = []
-}
-
-enum FilesRoute: Hashable {
-    case screenshots
-    case localAlbum(MediaCategory)
-    case remoteAlbum(MediaCategory)
-    case downloads
+    /// 文件 Tab 跳转请求（车机页快捷入口 → 指定段/分类）
+    @Published var filesJump: FileSegmentJump?
 }
 
 @main

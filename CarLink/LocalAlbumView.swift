@@ -2,16 +2,23 @@ import SwiftUI
 import AVKit
 import Photos
 
-// MARK: - 本地文件页（相册相簿 + 回退文件）
+// MARK: - 本地文件段（设计图 3.6：与记录仪文件同级，同名三子分类）
 
-struct LocalAlbumView: View {
-    let category: MediaCategory
+struct LocalAlbumContent: View {
+    @Binding var segment: FileSegment
 
     @EnvironmentObject var library: LibraryStore
+
+    @State private var category: MediaCategory = .loop
     @State private var filterDay: Date?
     @State private var showDatePicker = false
     @State private var viewer: LocalRecord?
-    @AppStorage("localListMode") private var listMode = false
+    @State private var selectMode = false
+    @State private var selection = Set<String>()
+    @State private var confirmDelete = false
+    @AppStorage("localListMode") private var listMode = true
+
+    private let gridColumns = [GridItem(.flexible(), spacing: 5), GridItem(.flexible(), spacing: 5)]
 
     private var records: [LocalRecord] {
         library.records(category: category)
@@ -23,41 +30,61 @@ struct LocalAlbumView: View {
         return records.filter { Fmt.day($0.date) == key }
     }
 
+    private var grouped: [(String, [LocalRecord])] {
+        let groups = Dictionary(grouping: filtered) { Fmt.day($0.date) }
+        return groups.keys.sorted(by: >).map { ($0, groups[$0]!) }
+    }
+
+    private var availableDays: Set<Date> {
+        Set(records.map { Calendar.current.startOfDay(for: $0.date) })
+    }
+
+    private var occupiedBytes: Int64 {
+        records.reduce(Int64(0)) { $0 + $1.sourceSize }
+    }
+
+    private var selectedRecords: [LocalRecord] {
+        filtered.filter { selection.contains($0.id) }
+    }
+
     var body: some View {
-        Group {
-            if records.isEmpty {
-                VStack(spacing: 10) {
-                    Image(systemName: "tray")
-                        .font(.largeTitle)
-                        .foregroundStyle(.tertiary)
-                    Text("暂无本地文件")
-                        .foregroundStyle(.secondary)
-                    Text("到「记录仪文件」下载，完成后自动出现在这里")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if listMode {
-                listBody
-            } else {
-                gridBody
-            }
-        }
-        .navigationTitle(category.title)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                Button {
-                    showDatePicker = true
-                } label: {
-                    Image(systemName: filterDay == nil ? "calendar" : "calendar.badge.checkmark")
-                }
-                Button {
-                    listMode.toggle()
-                } label: {
-                    Image(systemName: listMode ? "square.grid.2x2" : "list.bullet")
+        VStack(spacing: 0) {
+            AlbumTopBar(title: "本地文件") {
+                HStack(spacing: 8) {
+                    if selectMode && !selection.isEmpty {
+                        Button {
+                            confirmDelete = true
+                        } label: {
+                            CircleIcon(system: "trash")
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Button {
+                        listMode.toggle()
+                    } label: {
+                        CircleIcon(system: listMode ? "square.grid.2x2" : "list.bullet", hot: true)
+                    }
+                    .buttonStyle(.plain)
+                    Button {
+                        selectMode.toggle()
+                        if !selectMode { selection.removeAll() }
+                    } label: {
+                        Text(selectMode ? "完成" : "选择")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(records.isEmpty ? Color.secondary : Color.blue)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(records.isEmpty)
                 }
             }
+
+            SegmentBar(selection: $segment)
+
+            LocalTabsBar(category: $category)
+
+            dateHead
+
+            content
         }
         .sheet(isPresented: $showDatePicker) {
             DatePickerSheet(days: availableDays, selected: $filterDay)
@@ -66,109 +93,303 @@ struct LocalAlbumView: View {
         .sheet(item: $viewer) { r in
             LocalViewerSheet(record: r)
         }
+        .confirmationDialog("删除 \(selection.count) 个本地副本？车机上的原片不受影响。",
+                            isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("删除", role: .destructive) {
+                for r in selectedRecords {
+                    library.remove(r)
+                }
+                selection.removeAll()
+                selectMode = false
+            }
+            Button("取消", role: .cancel) {}
+        }
+        .onChange(of: category) { _ in
+            selection.removeAll()
+            selectMode = false
+        }
     }
 
-    private var availableDays: Set<Date> {
-        Set(records.map { Calendar.current.startOfDay(for: $0.date) })
+    private var dateHead: some View {
+        HStack {
+            Button {
+                showDatePicker = true
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "calendar")
+                        .font(.system(size: 10))
+                    Text(filterDay == nil ? "全部日期" : Fmt.day(filterDay!))
+                        .font(.system(size: 11.5, weight: .bold))
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .semibold))
+                }
+                .foregroundStyle(Color.blue)
+            }
+            .buttonStyle(.plain)
+            Spacer()
+            Text(records.isEmpty ? "已占用 0 B" : "已占用 \(Fmt.bytes(occupiedBytes))")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 6)
+        .padding(.bottom, 4)
     }
 
-    private var grouped: [(String, [LocalRecord])] {
-        let groups = Dictionary(grouping: filtered) { Fmt.day($0.date) }
-        return groups.keys.sorted(by: >).map { ($0, groups[$0]!) }
+    @ViewBuilder
+    private var content: some View {
+        if records.isEmpty {
+            VStack(spacing: 8) {
+                Image(systemName: "tray")
+                    .font(.largeTitle)
+                    .foregroundStyle(.tertiary)
+                Text("暂无本地文件")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Text("到「记录仪文件」下载，完成后自动出现在这里\n视频存系统相册「CarLink 车机互传」相簿")
+                    .font(.caption)
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.tertiary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if filtered.isEmpty {
+            VStack(spacing: 8) {
+                Image(systemName: "tray")
+                    .font(.largeTitle)
+                    .foregroundStyle(.tertiary)
+                Text("该日期暂无文件")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if listMode {
+            listBody
+        } else {
+            gridBody
+        }
     }
 
     private var listBody: some View {
-        List {
-            ForEach(grouped, id: \.0) { day, dayRecords in
-                Section("\(day) · \(dayRecords.count) 个") {
-                    ForEach(dayRecords) { r in
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(grouped, id: \.0) { day, items in
+                    groupHead(day, items)
+                    ForEach(items) { r in
                         row(r)
                     }
                 }
             }
+            .padding(.bottom, 12)
         }
-        .listStyle(.insetGrouped)
     }
 
     private var gridBody: some View {
         ScrollView {
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())], spacing: 10) {
-                ForEach(grouped, id: \.0) { day, dayRecords in
-                    Section {
-                        ForEach(dayRecords) { r in
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(grouped, id: \.0) { day, items in
+                    groupHead(day, items)
+                    LazyVGrid(columns: gridColumns, spacing: 5) {
+                        ForEach(items) { r in
                             cell(r)
                         }
-                    } header: {
-                        Text("\(day) · \(dayRecords.count) 个")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.top, 6)
                     }
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 8)
                 }
             }
-            .padding(.horizontal, 12)
+            .padding(.bottom, 12)
         }
+    }
+
+    private func groupHead(_ day: String, _ items: [LocalRecord]) -> some View {
+        HStack {
+            Text(day)
+                .font(.system(size: 11.5, weight: .bold))
+            Spacer()
+            Text("\(items.count) 个")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 7)
+        .padding(.bottom, 3)
     }
 
     private func row(_ r: LocalRecord) -> some View {
         Button {
-            viewer = r
+            handleTap(r)
         } label: {
-            HStack(spacing: 10) {
-                CameraBadge(camera: r.camera)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(Fmt.dateTime(r.date))
-                        .font(.subheadline)
-                        .foregroundStyle(.primary)
-                    HStack(spacing: 6) {
-                        Text(r.name).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                        if r.kind == .fileTS {
-                            Text("TS")
-                                .font(.caption2)
-                                .padding(.horizontal, 4)
-                                .background(RoundedRectangle(cornerRadius: 3).fill(Color.orange.opacity(0.2)))
-                                .foregroundStyle(.orange)
-                        }
-                    }
+            HStack(spacing: 8) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(r.camera.color.opacity(0.22))
+                    LocalThumb(record: r)
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
                 }
-                Spacer()
-                Text(Fmt.bytes(r.sourceSize))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+                .frame(width: 56, height: 34)
+                .clipShape(RoundedRectangle(cornerRadius: 5))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 3) {
+                        CameraBadge(camera: r.camera)
+                        Text(Fmt.dateTime(r.date))
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    Text(subtitle(r))
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 4)
+
+                if selectMode {
+                    Image(systemName: selection.contains(r.id) ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 17))
+                        .foregroundStyle(selection.contains(r.id) ? Color.blue : Color.secondary)
+                } else {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                }
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 5)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.4).onEnded { _ in
+                if !selectMode {
+                    selectMode = true
+                    selection.insert(r.id)
+                }
+            }
+        )
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.black.opacity(0.05))
+                .frame(height: 0.5)
+                .padding(.leading, 76)
         }
     }
 
     private func cell(_ r: LocalRecord) -> some View {
         Button {
-            viewer = r
+            handleTap(r)
         } label: {
-            ZStack(alignment: .bottomLeading) {
-                LocalThumb(record: r)
-                    .aspectRatio(16 / 9, contentMode: .fit)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                HStack(spacing: 5) {
-                    CameraBadge(camera: r.camera)
-                    Text(Fmt.time(r.date)).font(.caption2).lineLimit(1)
-                    Spacer(minLength: 0)
-                    if let d = r.duration {
-                        Text(Fmt.duration(d)).font(.caption2)
-                    } else if r.kind == .fileTS {
-                        Text("TS").font(.caption2)
+            VStack(alignment: .leading, spacing: 2) {
+                ZStack {
+                    LocalThumb(record: r)
+                    if r.kind == .fileTS || !isPhoto(r) {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 24, height: 24)
+                            .background(Circle().fill(Color.black.opacity(0.28)))
+                            .overlay(Circle().stroke(Color.white.opacity(0.95), lineWidth: 1.2))
+                    }
+                    if selectMode {
+                        Image(systemName: selection.contains(r.id) ? "checkmark.circle.fill" : "circle")
+                            .font(.system(size: 17))
+                            .foregroundStyle(.white)
+                            .shadow(radius: 2)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                            .padding(4)
                     }
                 }
-                .padding(6)
-                .background(
-                    LinearGradient(colors: [.clear, .black.opacity(0.55)], startPoint: .top, endPoint: .bottom)
+                .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(selection.contains(r.id) ? Color.blue : Color.clear, lineWidth: 2)
                 )
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+
+                HStack(spacing: 3) {
+                    CameraBadge(camera: r.camera)
+                    Text(Fmt.dateTime(r.date))
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .lineLimit(1)
+                }
+                Text(subtitle(r))
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
         }
         .buttonStyle(.plain)
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.4).onEnded { _ in
+                if !selectMode {
+                    selectMode = true
+                    selection.insert(r.id)
+                }
+            }
+        )
+    }
+
+    private func subtitle(_ r: LocalRecord) -> String {
+        var parts = [Fmt.bytes(r.sourceSize)]
+        if let d = r.duration {
+            parts.append(Fmt.duration(d))
+        } else if r.kind == .fileTS {
+            parts.append("TS 回退")
+        }
+        parts.append(downloadedText(r.downloadedAt))
+        return parts.joined(separator: " · ")
+    }
+
+    private func downloadedText(_ d: Date) -> String {
+        let c = Calendar.current.dateComponents([.month, .day], from: d)
+        return "\(c.month ?? 0)-\(c.day ?? 0) 下载"
+    }
+
+    private func isPhoto(_ r: LocalRecord) -> Bool {
+        let exts: Set<String> = ["png", "jpg", "jpeg", "webp", "heic", "heif", "bmp", "gif"]
+        return exts.contains((r.name as NSString).pathExtension.lowercased())
+    }
+
+    private func handleTap(_ r: LocalRecord) {
+        if selectMode {
+            if selection.contains(r.id) { selection.remove(r.id) }
+            else { selection.insert(r.id) }
+        } else {
+            viewer = r
+        }
+    }
+}
+
+// MARK: - 本地三子分类 Tab（无「下载中」）
+
+struct LocalTabsBar: View {
+    @Binding var category: MediaCategory
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(MediaCategory.allCases) { c in
+                Button {
+                    category = c
+                } label: {
+                    VStack(spacing: 4) {
+                        Text(c.title)
+                            .font(.system(size: 11, weight: category == c ? .bold : .regular))
+                            .foregroundStyle(category == c ? Color.blue : Color.secondary)
+                        Rectangle()
+                            .fill(category == c ? Color.blue : Color.clear)
+                            .frame(width: 34, height: 2)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 7)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 8)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color(.separator).opacity(0.6))
+                .frame(height: 0.5)
+        }
     }
 }
 
@@ -181,16 +402,17 @@ struct LocalThumb: View {
     var body: some View {
         ZStack {
             Rectangle().fill(record.camera.color.opacity(0.25))
-            if let image {
+            if let image = image {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
             } else if record.kind == .fileTS {
                 Image(systemName: "film")
-                    .font(.title)
+                    .font(.system(size: 13))
                     .foregroundStyle(record.camera.color)
             } else {
                 ProgressView()
+                    .scaleEffect(0.6)
             }
         }
         .task(id: record.id) {
@@ -332,7 +554,7 @@ struct PhotoAssetImageView: View {
 
     var body: some View {
         Group {
-            if let image {
+            if let image = image {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFit()
