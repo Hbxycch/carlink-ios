@@ -259,12 +259,11 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
             item.message = "未连接车机"
             return
         }
-        // 视频请求 format=mp4（车机端转封装），截图直接下载。
-        // 版本守卫：车机端 1.1.10 之前执行 mp4 转封装会触发 32 位 stagefright
-        // 原生崩溃（整个服务进程被杀），旧版本只下载原始 TS。
-        let mp4Capable = Self.serverVersionAtLeastMp4(connection?.carInfo?.version)
-        let wantMp4 = item.file.isVideo && mp4Capable
-        let url = api.downloadURL(path: item.file.path, format: wantMp4 ? "mp4" : nil)
+        // 一律下载原始 .ts：
+        // 部分车机/电视的 32 位 stagefright MPEG4Writer 存在原生缺陷，服务端转封装会
+        // SIGABRT（FORTIFY write count -1），且崩溃后主进程要干等到超时，客户端表现为
+        // 「0% 卡住 / 连接超时」。因此转封装改在手机本地做（LocalRemux，iOS 系统 muxer）。
+        let url = api.downloadURL(path: item.file.path)
         var req = URLRequest(url: url)
         req.timeoutInterval = 120
         let task = DownloadEngine.shared.session.downloadTask(with: req)
@@ -273,19 +272,6 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
         item.state = .downloading
         item.message = nil
         task.resume()
-    }
-
-    /// 服务端版本 >= 1.1.10（versionCode 12）才支持安全的 mp4 转封装
-    private static func serverVersionAtLeastMp4(_ version: String?) -> Bool {
-        let minimum = [1, 1, 10]
-        guard let v = version else { return false }
-        let parts = v.split(separator: ".").compactMap { Int($0) }
-        guard parts.count == 3 else { return false }
-        for (a, b) in zip(parts, minimum) {
-            if a > b { return true }
-            if a < b { return false }
-        }
-        return true
     }
 
     // MARK: - 引擎回调（主线程）
@@ -313,37 +299,51 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
             try? FileManager.default.removeItem(at: tempURL)
             return
         }
-        defer { try? FileManager.default.removeItem(at: tempURL) }
         item.task = nil
 
-        let remoteFormat = response?.value(forHTTPHeaderField: "X-CarLink-Format") // mp4 | fallback-ts | nil
-        let isMp4 = remoteFormat == "mp4"
-
-        // 保存目标文件名：转存成功时扩展名换为 .mp4
+        var sourceURL = tempURL
+        var remuxedURL: URL?
         var finalName = item.file.name
-        if isMp4, item.file.isVideo {
-            let base = (finalName as NSString).deletingPathExtension
-            finalName = base + ".mp4"
+        var duration: Double?
+
+        // 车机端若已转好 mp4 则直接用；否则在手机本地转封装（不转码，H.264+AAC 直通）
+        let serverFormat = response?.value(forHTTPHeaderField: "X-CarLink-Format")
+        if item.file.isVideo && serverFormat != "mp4" {
+            item.message = "转存 MP4…"
+            if let r = await LocalRemux.toMp4(src: tempURL) {
+                sourceURL = r.url
+                remuxedURL = r.url
+                duration = r.duration
+                let base = (finalName as NSString).deletingPathExtension
+                finalName = base + "." + r.url.pathExtension
+            }
+        }
+        defer {
+            try? FileManager.default.removeItem(at: tempURL)
+            if let r = remuxedURL { try? FileManager.default.removeItem(at: r) }
         }
 
+        let ext = sourceURL.pathExtension.lowercased()
+        let isMp4 = (ext == "mp4" || ext == "mov")
+
         let saveToPhotos = UserDefaults.standard.object(forKey: "saveToPhotos") as? Bool ?? true
-        // 只有服务端真正转成 mp4 才能存进相册（系统相册不支持 TS）；
-        // TS / 回退文件一律存「文件」App
-        let wantPhotos = isMp4 && saveToPhotos
+        // 系统相册只接受图片和 mp4/mov 视频；转封装失败的 TS 无法入库 → 存「文件」App
+        let isImage = PhotoSaver.isImageFile(sourceURL)
+        let wantPhotos = saveToPhotos && (isMp4 || isImage)
 
         var kind: SavedKind = .fileTS
         var localRef: String?
+        var photosError: String?
 
         if wantPhotos {
             item.message = "保存到相册…"
             do {
-                // 异步保存：授权弹窗与相册写库都不阻塞主线程
-                let assetId = try await PhotoSaver.saveToAlbum(fileAt: tempURL)
+                let assetId = try await PhotoSaver.saveToAlbum(fileAt: sourceURL)
                 kind = .photoAlbum
                 localRef = assetId
             } catch {
                 // 相册失败 → 回退存「文件」App
-                item.message = "相册保存失败（\(error.localizedDescription)），已改存「文件」App"
+                photosError = error.localizedDescription
             }
         }
 
@@ -355,11 +355,13 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
                 var i = 1
                 while FileManager.default.fileExists(atPath: dest.path) {
                     let base = (finalName as NSString).deletingPathExtension
-                    let ext = (finalName as NSString).pathExtension
-                    dest = dir.appending(path: "\(base)-\(i).\(ext)")
+                    let e = (finalName as NSString).pathExtension
+                    dest = dir.appending(path: "\(base)-\(i).\(e)")
                     i += 1
                 }
-                try FileManager.default.moveItem(at: tempURL, to: dest)
+                try FileManager.default.moveItem(at: sourceURL, to: dest)
+                // 源文件已移走，defer 里不要再删它
+                if sourceURL == remuxedURL { remuxedURL = nil }
                 kind = .fileTS
                 localRef = dest.lastPathComponent
             } catch {
@@ -369,7 +371,7 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
             }
         }
 
-        let record = LocalRecord(
+        var record = LocalRecord(
             sourcePath: item.file.path,
             sourceSize: item.file.size,
             name: finalName,
@@ -380,9 +382,18 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
             localRef: localRef!,
             downloadedAt: Date()
         )
+        record.duration = duration
         library?.add(record)
+        if let d = duration { DurationCache.set(d, for: item.file.path) }
         item.state = .done
         item.savedAs = kind == .photoAlbum ? "已存相册" : "已存文件 App"
+        if let e = photosError {
+            item.message = "相册保存失败（\(e)），已存「文件」App"
+        } else if kind == .fileTS && item.file.isVideo && !isMp4 {
+            item.message = "该视频无法转存相册，已存「文件」App"
+        } else {
+            item.message = nil
+        }
         pump()
     }
 
