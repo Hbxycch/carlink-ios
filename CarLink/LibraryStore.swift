@@ -38,13 +38,13 @@ final class LibraryStore: ObservableObject {
     }
 
     /// 回退 .ts 文件目录（「文件」App › CarLink › CarLink）
-    static var tsDirectory: URL {
+    nonisolated static var tsDirectory: URL {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         return docs.appending(path: "CarLink")
     }
 
     /// 「车机文件」浏览器下载的任意文件目录（「文件」App › CarLink › 车机文件）
-    static var carFilesDirectory: URL {
+    nonisolated static var carFilesDirectory: URL {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         return docs.appending(path: "CarLink/车机文件")
     }
