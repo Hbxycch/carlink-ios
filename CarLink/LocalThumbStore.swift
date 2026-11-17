@@ -6,9 +6,18 @@ import UIKit
 /// （.ts 无法被 AVFoundation 可靠解码，不生成首帧，靠车机缩略图兜底）
 enum LocalThumbStore {
 
+    private static var documentsDirectory: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    }
+
+    /// 回退文件目录（Documents/CarLink，与 LibraryStore.tsDirectory 一致）
+    private static var filesDirectory: URL {
+        documentsDirectory.appending(path: "CarLink")
+    }
+
     /// 封面缓存目录（Documents/CarLink/Thumbs）
     static var directory: URL {
-        LibraryStore.tsDirectory.appending(path: "Thumbs")
+        filesDirectory.appending(path: "Thumbs")
     }
 
     /// 保存封面数据，返回相对文件名（存入 LocalRecord.thumbPath）
@@ -31,7 +40,7 @@ enum LocalThumbStore {
             let url = directory.appending(path: name)
             if let img = UIImage(contentsOfFile: url.path) { return img }
         }
-        let src = LibraryStore.tsDirectory.appending(path: record.localRef)
+        let src = filesDirectory.appending(path: record.localRef)
         let ext = (record.name as NSString).pathExtension.lowercased()
         // 2) 图片文件直接读
         if ["png", "jpg", "jpeg", "webp", "heic", "bmp", "gif"].contains(ext) {
