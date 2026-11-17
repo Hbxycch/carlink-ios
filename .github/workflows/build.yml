@@ -22,6 +22,12 @@ jobs:
       - name: Install xcodegen
         run: brew install xcodegen
 
+      - name: Cache CocoaPods
+        uses: actions/cache@v4
+        with:
+          path: Pods
+          key: pods-${{ hashFiles('Podfile.lock') }}
+
       - name: Generate Xcode project
         run: xcodegen generate
 
@@ -58,15 +64,46 @@ jobs:
           path: CarLink-unsigned.ipa
           retention-days: 90
 
-      # 构建成功：把 IPA + ios-version.json 发布到 dist 分支（供 OTA 服务器分发）
-      - name: Publish IPA to dist branch
-        if: success() && !startsWith(github.ref, 'refs/tags/')
+      # 构建失败：把错误日志尾部提交回 main（ci-last-error.log），便于本地排查
+      - name: Report failure log
+        if: failure()
         run: |
-          VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Payload/CarLink.app/Info.plist)
-          BUILD=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" Payload/CarLink.app/Info.plist)
+          {
+            echo "# CI 构建失败日志（run ${GITHUB_RUN_NUMBER}）"
+            echo
+            if [ -f pod.log ]; then echo "## pod install"; tail -n 60 pod.log; echo; fi
+            if [ -f build.log ]; then echo "## xcodebuild（尾部 400 行）"; tail -n 400 build.log; fi
+          } > ci-last-error.log
+          git config user.name "ci-bot"
+          git config user.email "ci-bot@users.noreply.github.com"
+          git add ci-last-error.log
+          git commit -m "ci: 记录第 ${GITHUB_RUN_NUMBER} 次构建失败日志 [skip ci]"
+          git push origin HEAD:main
+
+  # 构建成功后：把 IPA + ios-version.json 发布到 dist 分支（独立 job，不影响构建）
+  publish-dist:
+    needs: build
+    if: success() && !startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download IPA artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: CarLink-unsigned-ipa
+
+      - name: Publish to dist branch
+        run: |
+          set -e
+          exec > >(tee publish.log) 2>&1
+          unzip -q CarLink-unsigned.ipa -d ex
+          VER=$(python3 -c "import plistlib; print(plistlib.load(open('ex/Payload/CarLink.app/Info.plist','rb'))['CFBundleShortVersionString'])")
+          BUILD=$(python3 -c "import plistlib; print(plistlib.load(open('ex/Payload/CarLink.app/Info.plist','rb'))['CFBundleVersion'])")
           cp CarLink-unsigned.ipa "CarLink-v${VER}-unsigned.ipa"
-          SIZE=$(stat -f%z "CarLink-v${VER}-unsigned.ipa")
-          MD5=$(md5 -q "CarLink-v${VER}-unsigned.ipa")
+          SIZE=$(stat -c%s "CarLink-v${VER}-unsigned.ipa")
+          MD5=$(md5sum "CarLink-v${VER}-unsigned.ipa" | cut -d' ' -f1)
           CHANGELOG=$(git log -1 --pretty=%s)
           DATE=$(date -u +"%Y-%m-%d")
           cat > ios-version.json <<EOF
@@ -88,25 +125,20 @@ jobs:
           git commit -m "dist v${VER}(${BUILD}) [skip ci]"
           git push -f origin HEAD:dist
 
-      # 构建失败：把错误日志尾部提交回 main（ci-last-error.log），便于本地排查
       - name: Report failure log
         if: failure()
         run: |
-          {
-            echo "# CI 失败日志（run ${GITHUB_RUN_NUMBER}）"
-            echo
-            if [ -f pod.log ]; then echo "## pod install"; tail -n 60 pod.log; echo; fi
-            if [ -f build.log ]; then echo "## xcodebuild（尾部 400 行）"; tail -n 400 build.log; fi
-          } > ci-last-error.log
           git config user.name "ci-bot"
           git config user.email "ci-bot@users.noreply.github.com"
+          # orphan 分支上直接提交会被拒，回到触发提交再干净地提交日志
+          git fetch origin main
+          git checkout -f origin/main
+          {
+            echo "# CI 发布失败日志（run ${GITHUB_RUN_NUMBER}）"
+            echo
+            echo "## publish-dist 步骤输出（尾部 100 行）"
+            tail -n 100 publish.log 2>/dev/null || echo "（无 publish.log）"
+          } > ci-last-error.log
           git add ci-last-error.log
-          git commit -m "ci: 记录第 ${GITHUB_RUN_NUMBER} 次构建失败日志 [skip ci]"
+          git commit -m "ci: 记录第 ${GITHUB_RUN_NUMBER} 次发布失败 [skip ci]"
           git push origin HEAD:main
-
-      - name: Create Release (tags only)
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: CarLink-unsigned.ipa
-          generate_release_notes: true
