@@ -6,6 +6,9 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-latest
@@ -23,7 +26,7 @@ jobs:
         run: xcodegen generate
 
       - name: CocoaPods install
-        run: pod install --repo-update
+        run: pod install --repo-update 2>&1 | tee pod.log
 
       - name: Build (unsigned Release)
         run: |
@@ -39,7 +42,7 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGN_ENTITLEMENTS="" \
-            build
+            build 2>&1 | tee build.log
 
       - name: Package unsigned IPA
         run: |
@@ -54,6 +57,52 @@ jobs:
           name: CarLink-unsigned-ipa
           path: CarLink-unsigned.ipa
           retention-days: 90
+
+      # 构建成功：把 IPA + ios-version.json 发布到 dist 分支（供 OTA 服务器分发）
+      - name: Publish IPA to dist branch
+        if: success() && !startsWith(github.ref, 'refs/tags/')
+        run: |
+          VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Payload/CarLink.app/Info.plist)
+          BUILD=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" Payload/CarLink.app/Info.plist)
+          cp CarLink-unsigned.ipa "CarLink-v${VER}-unsigned.ipa"
+          SIZE=$(stat -f%z "CarLink-v${VER}-unsigned.ipa")
+          MD5=$(md5 -q "CarLink-v${VER}-unsigned.ipa")
+          CHANGELOG=$(git log -1 --pretty=%s)
+          DATE=$(date -u +"%Y-%m-%d")
+          cat > ios-version.json <<EOF
+          {
+            "version": "${VER}",
+            "build": "${BUILD}",
+            "ipaUrl": "https://smartdash-ota.w.zood.org:8888/carlink/CarLink-v${VER}-unsigned.ipa",
+            "size": ${SIZE},
+            "md5": "${MD5}",
+            "changelog": "${CHANGELOG}",
+            "date": "${DATE}"
+          }
+          EOF
+          git config user.name "ci-bot"
+          git config user.email "ci-bot@users.noreply.github.com"
+          git checkout --orphan dist-tmp
+          git rm -rq --cached . 2>/dev/null || true
+          git add "CarLink-v${VER}-unsigned.ipa" ios-version.json
+          git commit -m "dist v${VER}(${BUILD}) [skip ci]"
+          git push -f origin HEAD:dist
+
+      # 构建失败：把错误日志尾部提交回 main（ci-last-error.log），便于本地排查
+      - name: Report failure log
+        if: failure()
+        run: |
+          {
+            echo "# CI 失败日志（run ${GITHUB_RUN_NUMBER}）"
+            echo
+            if [ -f pod.log ]; then echo "## pod install"; tail -n 60 pod.log; echo; fi
+            if [ -f build.log ]; then echo "## xcodebuild（尾部 400 行）"; tail -n 400 build.log; fi
+          } > ci-last-error.log
+          git config user.name "ci-bot"
+          git config user.email "ci-bot@users.noreply.github.com"
+          git add ci-last-error.log
+          git commit -m "ci: 记录第 ${GITHUB_RUN_NUMBER} 次构建失败日志 [skip ci]"
+          git push origin HEAD:main
 
       - name: Create Release (tags only)
         if: startsWith(github.ref, 'refs/tags/')

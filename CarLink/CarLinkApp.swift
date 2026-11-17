@@ -20,6 +20,7 @@ struct CarLinkApp: App {
     @StateObject private var downloads: DownloadManager
     @StateObject private var uploads = UploadManager()
     @StateObject private var nav = AppNav()
+    @StateObject private var updateChecker = UpdateChecker()
 
     init() {
         let connection = ConnectionStore()
@@ -45,9 +46,12 @@ struct CarLinkApp: App {
                 .environmentObject(downloads)
                 .environmentObject(uploads)
                 .environmentObject(nav)
+                .environmentObject(updateChecker)
                 .tint(Color(red: 0.18, green: 0.49, blue: 0.88))
                 .task {
                     settings.startMonitoring()
+                    // 启动后静默检查更新（无更新/已忽略不提示）
+                    await updateChecker.check(silent: true)
                 }
         }
     }
@@ -56,6 +60,8 @@ struct CarLinkApp: App {
 struct RootTabView: View {
     @EnvironmentObject var nav: AppNav
     @EnvironmentObject var downloads: DownloadManager
+    @EnvironmentObject var updateChecker: UpdateChecker
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         TabView(selection: $nav.tab) {
@@ -75,6 +81,25 @@ struct RootTabView: View {
             SettingsView()
                 .tabItem { Label("设置", systemImage: "gearshape.fill") }
                 .tag(AppTab.settings)
+        }
+        // 启动自动检查发现的更新：全局弹窗（手动检查的结果在设置页内展示）
+        .alert("发现新版本", isPresented: Binding(
+            get: { updateChecker.available != nil },
+            set: { if !$0 { updateChecker.dismiss() } }
+        )) {
+            Button("前往下载") {
+                if let url = URL(string: updateChecker.available?.ipaUrl ?? "") {
+                    openURL(url)
+                }
+                updateChecker.dismiss()
+            }
+            Button("稍后再说", role: .cancel) {
+                updateChecker.dismiss()
+            }
+        } message: {
+            if let info = updateChecker.available {
+                Text("v\(info.displayVersion) 已发布\(info.date.map { "（\($0)）" } ?? "")\n\(info.changelog ?? "")\n\n下载 ipa 后通过 Sideloadly 重装即可，数据不受影响。")
+            }
         }
     }
 }

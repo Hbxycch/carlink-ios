@@ -6,6 +6,10 @@ struct SettingsView: View {
     @EnvironmentObject var conn: ConnectionStore
     @EnvironmentObject var settings: SettingsStore
     @EnvironmentObject var library: LibraryStore
+    @EnvironmentObject var updateChecker: UpdateChecker
+    @Environment(\.openURL) private var openURL
+
+    @State private var showUpdateDetail = false
 
     var body: some View {
         NavigationStack {
@@ -16,6 +20,15 @@ struct SettingsView: View {
             }
             .listStyle(.insetGrouped)
             .navigationTitle("设置")
+            .alert("发现新版本", isPresented: $showUpdateDetail, presenting: updateChecker.available) { info in
+                Button("前往下载") {
+                    if let url = URL(string: info.ipaUrl) { openURL(url) }
+                    updateChecker.dismiss()
+                }
+                Button("稍后再说", role: .cancel) { updateChecker.dismiss() }
+            } message: { info in
+                Text("v\(info.displayVersion) 已发布\(info.date.map { "（\($0)）" } ?? "")\n\(info.changelog ?? "")\n\n下载 ipa 后通过 Sideloadly 重装即可，数据不受影响。")
+            }
         }
     }
 
@@ -78,16 +91,41 @@ struct SettingsView: View {
     private var aboutSection: some View {
         Section {
             LabeledRow(icon: "app.badge", title: "App", value: "CarLink 车机互传")
-            LabeledRow(icon: "number", title: "版本", value: "1.0.0 (1)")
+            LabeledRow(icon: "number", title: "版本", value: UpdateChecker.currentDisplay)
             if let info = conn.carInfo {
                 LabeledRow(icon: "car.2.fill", title: "车机端版本", value: "v\(info.version)")
             }
             LabeledRow(icon: "checkmark.seal", title: "播放内核",
                        value: "VLC（流式）+ AVPlayer（本地）")
+
+            Button {
+                Task {
+                    await updateChecker.check(silent: false)
+                    if updateChecker.available != nil { showUpdateDetail = true }
+                }
+            } label: {
+                HStack {
+                    Label("检查更新", systemImage: "arrow.triangle.2.circlepath")
+                    Spacer()
+                    if updateChecker.checking {
+                        ProgressView()
+                    } else if let text = updateChecker.lastResultText {
+                        Text(text)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    } else if updateChecker.available != nil {
+                        Text("有新版本")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                }
+            }
+            .disabled(updateChecker.checking)
         } header: {
             Text("关于")
         } footer: {
-            Text("配套车机端 App：com.zood.carlink（建议 v1.1.9 及以上，支持分类与 mp4 转存）。")
+            Text("配套车机端 App：com.zood.carlink（建议 v1.1.10 及以上，mp4 转存已隔离崩溃进程）。更新包托管于 smartdash-ota.w.zood.org，下载 ipa 后用 Sideloadly 重装。")
         }
     }
 }
