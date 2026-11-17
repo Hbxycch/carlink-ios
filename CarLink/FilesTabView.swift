@@ -78,7 +78,7 @@ struct SegmentBar: View {
                             Group {
                                 if selection == s {
                                     RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                        .fill(Color(.systemBackground))
+                                        .fill(CL.card)
                                         .shadow(color: Color.black.opacity(0.12), radius: 1.5, x: 0, y: 1)
                                 }
                             }

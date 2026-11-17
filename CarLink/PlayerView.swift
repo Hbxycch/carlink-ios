@@ -110,6 +110,7 @@ struct PlayerView: View {
     private var topBar: some View {
         HStack(spacing: 8) {
             Button {
+                if fullscreen { setFullscreen(false) }
                 dismiss()
             } label: {
                 Image(systemName: "chevron.left")
