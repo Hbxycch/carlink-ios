@@ -36,21 +36,38 @@ final class ConnectionStore: ObservableObject {
 
     // MARK: - 连接
 
-    func connect(host: String, port: Int) {
-        guard state != .connecting else { return }
+    private var connectGeneration = 0
+
+    /// source 仅用于日志标注：manual / auto / qr
+    func connect(host: String, port: Int, source: String = "manual") {
+        // 手动连接允许打断上一次（含自动连接）：旧的 .connecting 状态不再阻塞新请求
+        connectGeneration += 1
+        let gen = connectGeneration
         state = .connecting
         lastError = nil
+        let t0 = Date()
+        ConnLogStore.shared.log(source, "开始连接 \(host):\(port)")
         let api = APIClient(host: host, port: port)
         Task {
             do {
                 let info = try await api.info()
+                guard gen == self.connectGeneration else {
+                    ConnLogStore.shared.log(source, "连接被更新的请求取代，丢弃结果 \(host):\(port)")
+                    return
+                }
                 self.client = api
                 self.carInfo = info
                 self.state = .connected
+                let ms = Int(Date().timeIntervalSince(t0) * 1000)
+                ConnLogStore.shared.log(source, "已连接 \(info.deviceName) v\(info.version)（\(host):\(port)，\(ms)ms）")
                 self.remember(SavedDevice(host: host, port: port, name: info.deviceName))
                 self.volumes = (try? await api.volumes()) ?? []
                 self.startMonitor()
             } catch {
+                guard gen == self.connectGeneration else { return }
+                let detail = ConnLogStore.describe(error)
+                let ms = Int(Date().timeIntervalSince(t0) * 1000)
+                ConnLogStore.shared.log("ERR", "连接失败 \(host):\(port) \(detail)（\(ms)ms）")
                 if self.state == .connecting {
                     self.state = .disconnected
                     self.lastError = Self.describe(error)
@@ -70,9 +87,13 @@ final class ConnectionStore: ObservableObject {
     /// 启动 / 回到前台时自动连接最近一次使用的车机（20s 冷却，避免反复重试不可达设备）
     func autoConnectIfPossible() {
         guard state == .disconnected, let device = savedDevices.first else { return }
-        if let last = lastAutoConnectAt, Date().timeIntervalSince(last) < 20 { return }
+        if let last = lastAutoConnectAt, Date().timeIntervalSince(last) < 20 {
+            ConnLogStore.shared.log("AUTO", "冷却中（20s），跳过自动连接")
+            return
+        }
         lastAutoConnectAt = Date()
-        connect(device: device)
+        ConnLogStore.shared.log("AUTO", "自动连接上次设备 \(device.name) \(device.host):\(device.port)")
+        connect(host: device.host, port: device.port, source: "auto")
     }
 
     /// 解析车机二维码内容（http://192.168.1.100:8080/web）
@@ -80,11 +101,12 @@ final class ConnectionStore: ObservableObject {
         guard let comps = URLComponents(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
               let h = comps.host else { return false }
         let p = comps.port ?? 8080
-        connect(host: h, port: p)
+        connect(host: h, port: p, source: "qr")
         return true
     }
 
     func disconnect() {
+        ConnLogStore.shared.log("CONN", "主动断开")
         monitorTask?.cancel()
         monitorTask = nil
         client = nil
@@ -130,8 +152,10 @@ final class ConnectionStore: ObservableObject {
                     failures = 0
                 } catch {
                     failures += 1
+                    ConnLogStore.shared.log("MON", "心跳失败 #\(failures)/3 \(ConnLogStore.describe(error))")
                     if failures >= 3 {
                         self.lastError = "与车机的连接已断开"
+                        ConnLogStore.shared.log("MON", "连续 3 次心跳失败，判定断开")
                         self.disconnect()
                         break
                     }

@@ -37,6 +37,12 @@ struct ConnectView: View {
                 Label(err, systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
                     .font(.subheadline)
+                NavigationLink {
+                    ConnDiagnosticsView()
+                } label: {
+                    Label("查看连接诊断日志", systemImage: "stethoscope")
+                        .font(.subheadline)
+                }
             }
         }
     }

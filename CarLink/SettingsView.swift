@@ -40,6 +40,18 @@ struct SettingsView: View {
 
             Toggle("自动连接上次车机", isOn: $settings.autoConnect)
 
+            NavigationLink {
+                ConnDiagnosticsView()
+            } label: {
+                HStack {
+                    Label("连接诊断", systemImage: "stethoscope")
+                    Spacer()
+                    Text("\(ConnLogStore.shared.count) 条")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             if !conn.savedDevices.isEmpty {
                 ForEach(conn.savedDevices) { d in
                     HStack {
