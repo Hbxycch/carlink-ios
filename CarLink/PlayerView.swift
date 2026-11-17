@@ -22,8 +22,10 @@ struct PlayerView: View {
     @State private var confirmDeleteLocal = false
     @State private var shareURL: URL?
     @State private var showShare = false
+    @State private var fullscreen = false
 
-    private let rates: [Float] = [0.5, 1.0, 1.5, 2.0, 3.0]
+    /// 0.5× ~ 10×（设计图倍速 chips：慢放查细节 / 快进找事件）
+    private let rates: [Float] = [0.5, 1.0, 1.5, 2.0, 3.0, 5.0, 7.0, 10.0]
 
     init(file: CarFile, siblings: [CarFile]) {
         self.file = file
@@ -60,25 +62,29 @@ struct PlayerView: View {
             if controlsVisible {
                 VStack(spacing: 0) {
                     topBar
-                    badgesRow
+                    if !fullscreen { badgesRow }
                     Spacer()
                     centerControls
                     Spacer()
                     bottomBar
                 }
-                .padding()
+                .padding(fullscreen ? 14 : 16)
                 .transition(.opacity)
             }
         }
+        .statusBarHidden(fullscreen)
         .onAppear {
             if UserDefaults.standard.object(forKey: rateKey) != nil {
                 model.rate = UserDefaults.standard.float(forKey: rateKey)
             }
             guard let api = conn.client else { return }
-            model.play(url: api.downloadURL(path: file.path))
+            model.play(url: playbackURL(for: file, api: api))
             scheduleHide()
         }
-        .onDisappear { model.stop() }
+        .onDisappear {
+            model.stop()
+            if fullscreen { setFullscreen(false) }
+        }
         .onChange(of: model.endedToken) { _ in handleEnded() }
         .alert("文件信息", isPresented: $showInfo) {
             Button("好", role: .cancel) {}
@@ -121,13 +127,7 @@ struct PlayerView: View {
                     .foregroundStyle(.white)
                     .lineLimit(1)
                 if localRecord != nil {
-                    HStack(spacing: 2) {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 8, weight: .bold))
-                        Text("已在本地")
-                            .font(.caption2)
-                    }
-                    .foregroundStyle(.green)
+                    LocalTag(compact: true)
                 } else {
                     Text("\(Fmt.bytes(currentFile.size))\(durationText)")
                         .font(.caption2)
@@ -145,10 +145,19 @@ struct PlayerView: View {
                         .font(.title3)
                         .foregroundStyle(.white)
                 }
-            } else {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.title3)
-                    .foregroundStyle(.green)
+            }
+
+            Button {
+                setFullscreen(!fullscreen)
+                scheduleHide()
+            } label: {
+                Image(systemName: fullscreen
+                      ? "arrow.down.right.and.arrow.up.left"
+                      : "arrow.up.left.and.arrow.down.right")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 34, height: 34)
+                    .background(Circle().fill(Color.white.opacity(0.15)))
             }
 
             Menu {
@@ -253,69 +262,73 @@ struct PlayerView: View {
                 Spacer()
             }
 
-            // 倍速（按分类记忆）
-            HStack(spacing: 5) {
-                Text("倍速")
-                    .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.6))
-                ForEach(rates, id: \.self) { r in
-                    let active = abs(model.rate - r) < 0.01
-                    Button {
-                        applyRate(r)
-                    } label: {
-                        Text(rateLabel(r))
-                            .font(.system(size: 10, weight: active ? .bold : .regular))
+            // 倍速（按分类记忆，含 5/7/10× 快进档）
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 5) {
+                    Text("倍速")
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.6))
+                    ForEach(rates, id: \.self) { r in
+                        let active = abs(model.rate - r) < 0.01
+                        Button {
+                            applyRate(r)
+                        } label: {
+                            Text(rateLabel(r))
+                                .font(.system(size: 10, weight: active ? .bold : .regular))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(Capsule().fill(active ? CL.blue : Color.white.opacity(0.18)))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .frame(height: 22)
+
+            if !fullscreen {
+                // 同刻三路（前 / 后 / 自由）
+                HStack(spacing: 5) {
+                    Text("三路")
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.6))
+                    ForEach([Camera.front, .rear, .free], id: \.self) { cam in
+                        cameraChip(cam)
+                    }
+                    Spacer()
+                }
+
+                // 相邻时段
+                HStack {
+                    if let prev = prevFile {
+                        Button {
+                            play(prev, syncPosition: false)
+                        } label: {
+                            HStack(spacing: 3) {
+                                Image(systemName: "chevron.left").font(.caption2)
+                                Text(Fmt.time(prev.date)).font(.caption)
+                            }
                             .foregroundStyle(.white)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(Capsule().fill(active ? Color.blue : Color.white.opacity(0.18)))
-                    }
-                    .buttonStyle(.plain)
-                }
-                Spacer()
-            }
-
-            // 同刻三路（前 / 后 / 自由）
-            HStack(spacing: 5) {
-                Text("三路")
-                    .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.6))
-                ForEach([Camera.front, .rear, .free], id: \.self) { cam in
-                    cameraChip(cam)
-                }
-                Spacer()
-            }
-
-            // 相邻时段
-            HStack {
-                if let prev = prevFile {
-                    Button {
-                        play(prev, syncPosition: false)
-                    } label: {
-                        HStack(spacing: 3) {
-                            Image(systemName: "chevron.left").font(.caption2)
-                            Text(Fmt.time(prev.date)).font(.caption)
                         }
-                        .foregroundStyle(.white)
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
-                }
-                Spacer()
-                Text("相邻时段")
-                    .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.6))
-                Spacer()
-                if let next = nextFile {
-                    Button {
-                        play(next, syncPosition: false)
-                    } label: {
-                        HStack(spacing: 3) {
-                            Text(Fmt.time(next.date)).font(.caption)
-                            Image(systemName: "chevron.right").font(.caption2)
+                    Spacer()
+                    Text("相邻时段")
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.6))
+                    Spacer()
+                    if let next = nextFile {
+                        Button {
+                            play(next, syncPosition: false)
+                        } label: {
+                            HStack(spacing: 3) {
+                                Text(Fmt.time(next.date)).font(.caption)
+                                Image(systemName: "chevron.right").font(.caption2)
+                            }
+                            .foregroundStyle(.white)
                         }
-                        .foregroundStyle(.white)
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
             }
         }
@@ -414,12 +427,31 @@ struct PlayerView: View {
 
     // MARK: - 动作
 
+    /// 已下载到「文件」App 的回退副本直接播本地，省流量也更快；
+    /// 存相册的记录仍走车机流（相册资产需走 PhotoKit，不适合边下边播场景）
+    private func playbackURL(for f: CarFile, api: APIClient) -> URL {
+        if let rec = library.record(for: f), rec.kind == .fileTS {
+            let local = LibraryStore.tsDirectory.appending(path: rec.localRef)
+            if FileManager.default.fileExists(atPath: local.path) { return local }
+        }
+        return api.downloadURL(path: f.path)
+    }
+
     private func play(_ f: CarFile, syncPosition: Bool) {
         currentFile = f
-        if let u = conn.client?.downloadURL(path: f.path) {
-            model.play(url: u, resumePosition: syncPosition ? model.position : 0)
+        if let api = conn.client {
+            model.play(url: playbackURL(for: f, api: api),
+                       resumePosition: syncPosition ? model.position : 0)
             scheduleHide()
         }
+    }
+
+    /// 全屏：横屏沉浸播放（旋转整屏 + 隐藏状态栏，退出时恢复竖屏）
+    private func setFullscreen(_ on: Bool) {
+        fullscreen = on
+        OrientationLock.shared.set(on ? .landscape : .portrait)
+        withAnimation(.easeInOut(duration: 0.2)) { controlsVisible = true }
+        scheduleHide()
     }
 
     private func togglePlay() {
@@ -459,9 +491,8 @@ struct PlayerView: View {
                 }
             }
         } else {
-            PhotoSaver.loadAssetVideoURL(localId: rec.localRef) { url in
-                guard let u = url else { return }
-                DispatchQueue.main.async {
+            Task {
+                if let u = await LocalVideoResolver.exportURL(localId: rec.localRef) {
                     self.shareURL = u
                     self.showShare = true
                 }
@@ -477,6 +508,7 @@ struct PlayerView: View {
 
     private func rateLabel(_ r: Float) -> String {
         if abs(r - 1.0) < 0.01 { return "1.0×" }
+        if r >= 10 { return String(format: "%.0f×", r) }
         return String(format: "%.1f×", r)
     }
 

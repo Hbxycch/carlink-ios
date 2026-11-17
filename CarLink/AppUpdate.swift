@@ -16,6 +16,9 @@ struct AppUpdateInfo: Codable, Equatable {
     var displayVersion: String {
         version + (build.map { " (\($0))" } ?? "")
     }
+
+    /// 忽略版本的去重键（同版本不同 build 也算新版本）
+    var key: String { "\(version)#\(build ?? "0")" }
 }
 
 @MainActor
@@ -28,7 +31,18 @@ final class UpdateChecker: ObservableObject {
     @Published var lastResultText: String?
 
     /// 用户已忽略的版本（点击「稍后再说」后不再打扰）
-    @AppStorage("dismissedUpdateVersion") private var dismissedVersion: String = ""
+    @AppStorage("dismissedUpdateKey") private var dismissedKey: String = ""
+
+    /// 清单用 nginx 托管且带 Cache-Control: max-age=3600，
+    /// 用共享 URLSession 会拿到一小时内的旧清单（表现为「刚发布却不提示新版本」）。
+    /// 这里用 ephemeral + 强制忽略缓存，并附加时间戳参数双保险。
+    private static let session: URLSession = {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        cfg.timeoutIntervalForRequest = 20
+        cfg.timeoutIntervalForResource = 30
+        return URLSession(configuration: cfg)
+    }()
 
     static var currentVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
@@ -62,29 +76,41 @@ final class UpdateChecker: ObservableObject {
         checking = true
         defer { checking = false }
         do {
-            let (data, resp) = try await URLSession.shared.data(from: Self.manifestURL)
+            var comps = URLComponents(url: Self.manifestURL, resolvingAgainstBaseURL: false)
+            comps?.queryItems = [URLQueryItem(name: "t", value: String(Int(Date().timeIntervalSince1970)))]
+            guard let url = comps?.url else { throw APIError("清单地址无效") }
+            var req = URLRequest(url: url)
+            req.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+
+            let (data, resp) = try await Self.session.data(for: req)
             guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
                 throw APIError("HTTP \((resp as? HTTPURLResponse)?.statusCode ?? -1)")
             }
             let info = try JSONDecoder().decode(AppUpdateInfo.self, from: data)
-            if Self.isNewer(info.version, than: Self.currentVersion) {
-                if silent && info.version == dismissedVersion { return }
+
+            // 版本号更大，或同版本号但 build 更高，都算有更新
+            let newerVersion = Self.isNewer(info.version, than: Self.currentVersion)
+            let newerBuild = info.version == Self.currentVersion
+                && Self.isNewer(info.build ?? "0", than: Self.currentBuild)
+
+            if newerVersion || newerBuild {
+                if silent && info.key == dismissedKey { return }
                 available = info
                 lastResultText = nil
             } else {
                 available = nil
-                if !silent { lastResultText = "已是最新版本（\(Self.currentDisplay)）" }
+                if !silent { lastResultText = "已是最新（\(Self.currentDisplay)）" }
             }
         } catch {
             if !silent {
-                lastResultText = "检查更新失败：\(error.localizedDescription)"
+                lastResultText = "检查失败：\(error.localizedDescription)"
             }
         }
     }
 
     /// 用户选择忽略本次更新
     func dismiss() {
-        if let v = available?.version { dismissedVersion = v }
+        if let v = available { dismissedKey = v.key }
         available = nil
     }
 }

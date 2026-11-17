@@ -14,6 +14,7 @@ final class AppNav: ObservableObject {
 
 @main
 struct CarLinkApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var conn = ConnectionStore()
     @StateObject private var library = LibraryStore()
     @StateObject private var settings = SettingsStore()
@@ -48,7 +49,8 @@ struct CarLinkApp: App {
                 .environmentObject(uploads)
                 .environmentObject(nav)
                 .environmentObject(updateChecker)
-                .tint(Color(red: 0.18, green: 0.49, blue: 0.88))
+                .tint(CL.blue)
+                .preferredColorScheme(settings.appearance.scheme)
                 .task {
                     settings.startMonitoring()
                     // 启动自动连接上次使用的车机

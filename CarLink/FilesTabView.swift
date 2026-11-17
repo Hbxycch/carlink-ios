@@ -1,11 +1,11 @@
 import SwiftUI
 
-// MARK: - 文件 Tab 三段（对齐设计图：单页 + 截图/本地文件/记录仪文件）
+// MARK: - 文件 Tab 三段（对齐设计图：单页 + 记录仪文件 / 截图 / 本地文件）
 
 enum FileSegment: String, CaseIterable, Identifiable {
+    case remote = "记录仪文件"
     case screenshots = "截图"
     case local = "本地文件"
-    case remote = "记录仪文件"
 
     var id: String { rawValue }
 }
@@ -39,7 +39,7 @@ struct FilesTabView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(.systemGroupedBackground))
+            .background(CL.page)
             .toolbar(.hidden, for: .navigationBar)
         }
         .onAppear {
@@ -152,16 +152,32 @@ struct ScreenshotAlbumContent: View {
     var body: some View {
         VStack(spacing: 0) {
             AlbumTopBar(title: "截图") {
-                Button {
-                    selectMode.toggle()
-                    if !selectMode { selection.removeAll() }
-                } label: {
-                    Text(selectMode ? "完成" : "选择")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(files.isEmpty ? Color.secondary : Color.blue)
+                HStack(spacing: 10) {
+                    if selectMode {
+                        Button {
+                            if files.allSatisfy({ selection.contains($0.id) }) {
+                                selection.removeAll()
+                            } else {
+                                selection = Set(files.map(\.id))
+                            }
+                        } label: {
+                            Text(files.allSatisfy { selection.contains($0.id) } && !files.isEmpty ? "全不选" : "全选")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(CL.blue)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Button {
+                        selectMode.toggle()
+                        if !selectMode { selection.removeAll() }
+                    } label: {
+                        Text(selectMode ? "完成" : "选择")
+                            .font(.system(size: 13, weight: selectMode ? .semibold : .medium))
+                            .foregroundStyle(files.isEmpty ? Color.secondary : CL.blue)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(files.isEmpty)
                 }
-                .buttonStyle(.plain)
-                .disabled(files.isEmpty)
             }
 
             SegmentBar(selection: $segment)
@@ -233,7 +249,9 @@ struct ScreenshotAlbumContent: View {
     }
 
     private func cell(_ f: CarFile) -> some View {
-        Button {
+        let badge = downloads.badge(for: f.path)
+        let downloaded = library.isDownloaded(f)
+        return Button {
             if selectMode {
                 if selection.contains(f.id) { selection.remove(f.id) }
                 else { selection.insert(f.id) }
@@ -260,10 +278,19 @@ struct ScreenshotAlbumContent: View {
                     .foregroundStyle(.white)
                     .padding(4)
 
+                if let b = badge, b.active {
+                    DownloadProgressBadge(progress: b.progress, paused: b.paused)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if downloaded {
+                    LocalCheckDot()
+                        .padding(3)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                }
+
                 if selectMode {
                     Image(systemName: selection.contains(f.id) ? "checkmark.circle.fill" : "circle")
                         .font(.system(size: 16))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(selection.contains(f.id) ? CL.blue : .white)
                         .shadow(radius: 2)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                         .padding(3)
@@ -273,10 +300,18 @@ struct ScreenshotAlbumContent: View {
             .clipShape(RoundedRectangle(cornerRadius: 4))
             .overlay(
                 RoundedRectangle(cornerRadius: 4)
-                    .stroke(selection.contains(f.id) ? Color.blue : Color.clear, lineWidth: 2)
+                    .stroke(selection.contains(f.id) ? CL.blue : Color.clear, lineWidth: 2)
             )
         }
         .buttonStyle(.plain)
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.35).onEnded { _ in
+                if !selectMode {
+                    selectMode = true
+                    selection.insert(f.id)
+                }
+            }
+        )
     }
 
     private var downloadBar: some View {

@@ -2,6 +2,32 @@ import Foundation
 import SwiftUI
 import Network
 
+// MARK: - 外观主题（默认跟随系统：深浅色自动切换）
+
+enum AppAppearance: String, CaseIterable, Identifiable {
+    case auto
+    case light
+    case dark
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .auto: return "跟随系统"
+        case .light: return "浅色"
+        case .dark: return "深色"
+        }
+    }
+
+    var scheme: ColorScheme? {
+        switch self {
+        case .auto: return nil
+        case .light: return .light
+        case .dark: return .dark
+        }
+    }
+}
+
 /// 全局设置（@AppStorage 持久化）
 @MainActor
 final class SettingsStore: ObservableObject {
@@ -15,6 +41,8 @@ final class SettingsStore: ObservableObject {
     @AppStorage("autoConnect") var autoConnect = true
     /// 视频播完自动连播下一段（按时间顺序）
     @AppStorage("autoPlayNext") var autoPlayNext = true
+    /// 外观：跟随系统（默认）/ 浅色 / 深色
+    @AppStorage("appAppearance") var appearance: AppAppearance = .auto
 
     /// 网络类型监测（供下载调度订阅）
     @Published var isWiFi = true

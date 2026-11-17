@@ -122,11 +122,24 @@ final class DownloadEngine: NSObject, URLSessionDownloadDelegate {
     }
 }
 
+// MARK: - 下载角标（供列表页在封面上显示进度，不依赖 DownloadItem 的细粒度发布）
+
+struct DownloadBadge: Equatable {
+    var state: DownloadState
+    var progress: Double
+
+    var paused: Bool { state == .paused || state == .failed }
+    var active: Bool { state == .downloading || state == .waiting || state == .paused }
+}
+
 // MARK: - 下载管理器
 
 @MainActor
 final class DownloadManager: ObservableObject, DownloadEngineDelegate {
     @Published private(set) var items: [DownloadItem] = []
+
+    /// 源路径 → 封面进度角标（仅在百分比整数变化时更新，避免高频刷新整页）
+    @Published private(set) var badges: [String: DownloadBadge] = [:]
 
     private let maxConcurrent = 2
 
@@ -165,10 +178,16 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
             guard !inQueue.contains(f.path) else { continue }
             if let lib = library, lib.isDownloaded(f) { continue }
             items.insert(DownloadItem(file: f, target: target), at: 0)
+            badges[f.path] = DownloadBadge(state: .waiting, progress: 0)
             added += 1
         }
         if added > 0 { pump() }
         return added
+    }
+
+    /// 封面角标查询（无任务返回 nil）
+    func badge(for path: String) -> DownloadBadge? {
+        badges[path]
     }
 
     func addOne(_ f: CarFile, target: DownloadTarget) {
@@ -180,6 +199,7 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
     func pause(_ item: DownloadItem) {
         guard item.state == .downloading || item.state == .waiting else { return }
         item.state = .paused
+        badges[item.id] = DownloadBadge(state: .paused, progress: item.progress)
         if let t = item.task, t.state == .running {
             t.cancel(byProducingResumeData: { [weak item] data in
                 DispatchQueue.main.async { item?.resumeData = data }
@@ -197,11 +217,13 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
             item.resumeData = nil
             item.state = .downloading
             item.message = nil
+            badges[item.id] = DownloadBadge(state: .downloading, progress: item.progress)
             task.resume()
         } else {
             item.received = 0
             item.total = 0
             item.state = .waiting
+            badges[item.id] = DownloadBadge(state: .waiting, progress: 0)
             pump()
         }
     }
@@ -211,6 +233,7 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
         item.task = nil
         item.resumeData = nil
         items.removeAll { $0.id == item.id }
+        badges[item.id] = nil
     }
 
     func retry(_ item: DownloadItem) {
@@ -219,6 +242,7 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
         item.total = 0
         item.message = nil
         item.state = .waiting
+        badges[item.id] = DownloadBadge(state: .waiting, progress: 0)
         pump()
     }
 
@@ -231,6 +255,7 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
     func cancelAll() {
         for it in items { it.task?.cancel() }
         items.removeAll()
+        badges.removeAll()
     }
 
     func clearFinished() {
@@ -292,6 +317,12 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
         guard let item = items.first(where: { $0.id == path }), item.state == .downloading else { return }
         item.received = received
         if total > 0 { item.total = total }
+        // 封面角标：只在百分比整数变化时刷新，避免高频重绘整个列表
+        let denom = total > 0 ? Double(total) : Double(max(item.file.size, 1))
+        let pct = min(100, Int(Double(received) / denom * 100))
+        if Int((badges[path]?.progress ?? -1) * 100) != pct {
+            badges[path] = DownloadBadge(state: .downloading, progress: Double(pct) / 100.0)
+        }
     }
 
     private func _onFinished(path: String, tempURL: URL, response: HTTPURLResponse?) async {
@@ -327,9 +358,15 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
         let isMp4 = (ext == "mp4" || ext == "mov")
 
         let saveToPhotos = UserDefaults.standard.object(forKey: "saveToPhotos") as? Bool ?? true
-        // 系统相册只接受图片和 mp4/mov 视频；转封装失败的 TS 无法入库 → 存「文件」App
         let isImage = PhotoSaver.isImageFile(sourceURL)
-        let wantPhotos = saveToPhotos && (isMp4 || isImage)
+        // 系统相册只接受图片和「真的有视频轨」的 mp4/mov：
+        // 转封装可能只成功写出音轨，这类文件入相册后就是黑屏 + 静音图标，
+        // 因此存相册前先真读一遍轨道，不合格就落到「文件」App（内置 VLC 仍可播放）。
+        var playableVideo = false
+        if !isImage && isMp4 {
+            playableVideo = await LocalRemux.isPlayableVideoFile(sourceURL)
+        }
+        let wantPhotos = saveToPhotos && (isImage || playableVideo)
 
         var kind: SavedKind = .fileTS
         var localRef: String?
@@ -367,6 +404,7 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
             } catch {
                 item.state = .failed
                 item.message = "保存失败：\(error.localizedDescription)"
+                badges[path] = nil
                 return
             }
         }
@@ -399,10 +437,11 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
         if let d = duration { DurationCache.set(d, for: item.file.path) }
         item.state = .done
         item.savedAs = kind == .photoAlbum ? "已存相册" : "已存文件 App"
+        badges[path] = nil
         if let e = photosError {
             item.message = "相册保存失败（\(e)），已存「文件」App"
-        } else if kind == .fileTS && item.file.isVideo && !isMp4 {
-            item.message = "该视频无法转存相册，已存「文件」App"
+        } else if kind == .fileTS && item.file.isVideo && !playableVideo {
+            item.message = "该视频转封装后仍无法进相册，已存「文件」App（本地文件页可用内置播放器观看）"
         } else {
             item.message = nil
         }
@@ -417,6 +456,7 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
         if ns.code == NSURLErrorCancelled { return }
         item.state = .failed
         item.message = ConnectionStore.describe(error)
+        badges[path] = nil
         pump()
     }
 }

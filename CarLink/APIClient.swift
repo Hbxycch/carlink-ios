@@ -58,6 +58,12 @@ final class APIClient {
         try await getJSON("/api/status")
     }
 
+    /// 存储卷（内部存储 / SD 卡 / USB 的总量与剩余）
+    func volumes() async throws -> [VolumeInfo] {
+        let r: VolumeListResponse = try await getJSON("/api/volumes")
+        return r.volumes
+    }
+
     // MARK: - 文件列表
 
     func files(type: String, camera: String? = nil, category: String? = nil) async throws -> [CarFile] {

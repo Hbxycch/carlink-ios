@@ -15,6 +15,7 @@ struct LocalAlbumContent: View {
     @State private var viewer: LocalRecord?
     @State private var selectMode = false
     @State private var selection = Set<String>()
+    @State private var anchorID: String?
     @State private var confirmDelete = false
     @AppStorage("localListMode") private var listMode = true
 
@@ -59,19 +60,37 @@ struct LocalAlbumContent: View {
                         }
                         .buttonStyle(.plain)
                     }
-                    Button {
-                        listMode.toggle()
-                    } label: {
-                        CircleIcon(system: listMode ? "square.grid.2x2" : "list.bullet", hot: true)
+                    if selectMode {
+                        Button {
+                            if filtered.allSatisfy({ selection.contains($0.id) }) && !filtered.isEmpty {
+                                selection.removeAll()
+                            } else {
+                                selection = Set(filtered.map(\.id))
+                            }
+                        } label: {
+                            Text(filtered.allSatisfy { selection.contains($0.id) } && !filtered.isEmpty ? "全不选" : "全选")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(CL.blue)
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        Button {
+                            listMode.toggle()
+                        } label: {
+                            CircleIcon(system: listMode ? "square.grid.2x2" : "list.bullet", hot: true)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                     Button {
                         selectMode.toggle()
-                        if !selectMode { selection.removeAll() }
+                        if !selectMode {
+                            selection.removeAll()
+                            anchorID = nil
+                        }
                     } label: {
                         Text(selectMode ? "完成" : "选择")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(records.isEmpty ? Color.secondary : Color.blue)
+                            .font(.system(size: 13, weight: selectMode ? .semibold : .medium))
+                            .foregroundStyle(records.isEmpty ? Color.secondary : CL.blue)
                     }
                     .buttonStyle(.plain)
                     .disabled(records.isEmpty)
@@ -202,13 +221,31 @@ struct LocalAlbumContent: View {
     }
 
     private func groupHead(_ day: String, _ items: [LocalRecord]) -> some View {
-        HStack {
+        HStack(spacing: 6) {
             Text(day)
                 .font(.system(size: 11.5, weight: .bold))
             Spacer()
             Text("\(items.count) 个")
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
+            if selectMode {
+                let allIn = items.allSatisfy { selection.contains($0.id) }
+                Button {
+                    if allIn {
+                        for r in items { selection.remove(r.id) }
+                    } else {
+                        for r in items { selection.insert(r.id) }
+                    }
+                } label: {
+                    Text(allIn ? "取消本组" : "选本组")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(CL.blue)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(CL.blueBg))
+                }
+                .buttonStyle(.plain)
+            }
         }
         .padding(.horizontal, 12)
         .padding(.top, 7)
@@ -245,7 +282,7 @@ struct LocalAlbumContent: View {
                 if selectMode {
                     Image(systemName: selection.contains(r.id) ? "checkmark.circle.fill" : "circle")
                         .font(.system(size: 17))
-                        .foregroundStyle(selection.contains(r.id) ? Color.blue : Color.secondary)
+                        .foregroundStyle(selection.contains(r.id) ? CL.blue : Color.secondary)
                 } else {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 11))
@@ -258,16 +295,19 @@ struct LocalAlbumContent: View {
         }
         .buttonStyle(.plain)
         .simultaneousGesture(
-            LongPressGesture(minimumDuration: 0.4).onEnded { _ in
-                if !selectMode {
+            LongPressGesture(minimumDuration: 0.35).onEnded { _ in
+                if selectMode {
+                    selectRange(to: r)
+                } else {
                     selectMode = true
                     selection.insert(r.id)
+                    anchorID = r.id
                 }
             }
         )
         .overlay(alignment: .bottom) {
             Rectangle()
-                .fill(Color.black.opacity(0.05))
+                .fill(CL.line)
                 .frame(height: 0.5)
                 .padding(.leading, 76)
         }
@@ -291,7 +331,7 @@ struct LocalAlbumContent: View {
                     if selectMode {
                         Image(systemName: selection.contains(r.id) ? "checkmark.circle.fill" : "circle")
                             .font(.system(size: 17))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(selection.contains(r.id) ? CL.blue : .white)
                             .shadow(radius: 2)
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                             .padding(4)
@@ -301,7 +341,7 @@ struct LocalAlbumContent: View {
                 .clipShape(RoundedRectangle(cornerRadius: 6))
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
-                        .stroke(selection.contains(r.id) ? Color.blue : Color.clear, lineWidth: 2)
+                        .stroke(selection.contains(r.id) ? CL.blue : Color.clear, lineWidth: 2)
                 )
 
                 HStack(spacing: 3) {
@@ -318,10 +358,13 @@ struct LocalAlbumContent: View {
         }
         .buttonStyle(.plain)
         .simultaneousGesture(
-            LongPressGesture(minimumDuration: 0.4).onEnded { _ in
-                if !selectMode {
+            LongPressGesture(minimumDuration: 0.35).onEnded { _ in
+                if selectMode {
+                    selectRange(to: r)
+                } else {
                     selectMode = true
                     selection.insert(r.id)
+                    anchorID = r.id
                 }
             }
         )
@@ -352,9 +395,24 @@ struct LocalAlbumContent: View {
         if selectMode {
             if selection.contains(r.id) { selection.remove(r.id) }
             else { selection.insert(r.id) }
+            anchorID = r.id
         } else {
             viewer = r
         }
+    }
+
+    /// 长按 = 从锚点整段选中（一次删掉一整天几十个回退文件）
+    private func selectRange(to r: LocalRecord) {
+        guard let anchor = anchorID,
+              let i = filtered.firstIndex(where: { $0.id == anchor }),
+              let j = filtered.firstIndex(where: { $0.id == r.id }) else {
+            selection.insert(r.id)
+            anchorID = r.id
+            return
+        }
+        let range = i <= j ? i...j : j...i
+        for k in range { selection.insert(filtered[k].id) }
+        anchorID = r.id
     }
 }
 
@@ -438,7 +496,6 @@ struct LocalViewerSheet: View {
     @Environment(\.dismiss) private var dismiss
     let record: LocalRecord
 
-    @State private var player: AVPlayer?
     @State private var shareURL: URL?
     @State private var showShare = false
     @State private var confirmDelete = false
@@ -486,36 +543,19 @@ struct LocalViewerSheet: View {
         }
     }
 
-    // 回退 .ts 文件：AVPlayer 直接播 Documents/CarLink 下的文件
+    // 已下载视频：相册资产走 AVPlayerItem（兼容 AVComposition），
+    // 「文件」App 的 .ts 回退文件走 VLC 内核——两者都不再出现「黑屏 + 静音图标」
     private var tsViewer: some View {
-        VStack {
-            VideoPlayer(player: player)
-                .onAppear {
-                    let url = LibraryStore.tsDirectory.appending(path: record.localRef)
-                    player = AVPlayer(url: url)
-                    player?.play()
-                }
-                .onDisappear { player?.pause() }
-        }
+        LocalVideoView(fileURL: LibraryStore.tsDirectory.appending(path: record.localRef))
     }
 
-    // 相册资产：图片直接显示，视频经 PHImageManager 拿 AVAsset
+    // 相册资产：图片直接显示，视频走 AVPlayerItem
     @ViewBuilder
     private var albumViewer: some View {
         if isPhotoRecord {
             PhotoAssetImageView(localId: record.localRef)
         } else {
-            VideoPlayer(player: player)
-                .onAppear {
-                    PhotoSaver.loadAssetVideoURL(localId: record.localRef) { url in
-                        if let u = url {
-                            let p = AVPlayer(url: u)
-                            p.play()
-                            DispatchQueue.main.async { self.player = p }
-                        }
-                    }
-                }
-                .onDisappear { player?.pause() }
+            LocalVideoView(localId: record.localRef)
         }
     }
 
@@ -540,9 +580,8 @@ struct LocalViewerSheet: View {
                 }
             }
         } else {
-            PhotoSaver.loadAssetVideoURL(localId: record.localRef) { url in
-                guard let u = url else { return }
-                DispatchQueue.main.async {
+            Task {
+                if let u = await LocalVideoResolver.exportURL(localId: record.localRef) {
                     self.shareURL = u
                     self.showShare = true
                 }

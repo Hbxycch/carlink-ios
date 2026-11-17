@@ -96,7 +96,6 @@ struct WifiInfo: Codable {
 }
 
 // MARK: - /api/info
-
 struct CarInfo: Codable {
     struct Switches: Codable {
         let screenshot: Bool?
@@ -113,9 +112,44 @@ struct CarInfo: Codable {
     let port: Int
     let ip: String?
     let theme: String?
+    /// 车机机型（Android Build.MODEL，如 ROCO K706 / TCL 85Q9K）
+    let model: String?
+    /// 车机厂商（Build.BRAND）
+    let brand: String?
     let wifi: WifiInfo?
     let switches: Switches?
     let counts: Counts?
+
+    /// 机型展示："ROCO K706"（无 model 时退回 brand）
+    var modelText: String? {
+        if let m = model, !m.isEmpty { return m }
+        if let b = brand, !b.isEmpty { return b }
+        return nil
+    }
+}
+
+// MARK: - /api/volumes（内部存储 / SD 卡 / USB 剩余空间）
+
+struct VolumeInfo: Codable, Identifiable {
+    let uuid: String?
+    let type: String?         // internal / sd / usb
+    let path: String?
+    let description: String?
+    let totalBytes: Int64?
+    let freeBytes: Int64?
+    let removable: Bool?
+    let mounted: Bool?
+
+    var id: String { (uuid ?? path ?? description ?? "v") + (type ?? "") }
+    var usedRatio: Double {
+        guard let t = totalBytes, t > 0, let f = freeBytes else { return 0 }
+        return min(1, max(0, Double(t - f) / Double(t)))
+    }
+    var isMounted: Bool { mounted ?? true }
+}
+
+struct VolumeListResponse: Codable {
+    let volumes: [VolumeInfo]
 }
 
 // MARK: - /api/status

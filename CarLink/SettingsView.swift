@@ -9,27 +9,17 @@ struct SettingsView: View {
     @EnvironmentObject var updateChecker: UpdateChecker
     @Environment(\.openURL) private var openURL
 
-    @State private var showUpdateDetail = false
-
     var body: some View {
         NavigationStack {
             List {
                 connectionSection
                 downloadSection
                 playbackSection
+                appearanceSection
                 aboutSection
             }
             .listStyle(.insetGrouped)
             .navigationTitle("设置")
-            .alert("发现新版本", isPresented: $showUpdateDetail, presenting: updateChecker.available) { info in
-                Button("前往下载") {
-                    if let url = URL(string: info.ipaUrl) { openURL(url) }
-                    updateChecker.dismiss()
-                }
-                Button("稍后再说", role: .cancel) { updateChecker.dismiss() }
-            } message: { info in
-                Text("v\(info.displayVersion) 已发布\(info.date.map { "（\($0)）" } ?? "")\n\(info.changelog ?? "")\n\n下载 ipa 后通过 Sideloadly 重装即可，数据不受影响。")
-            }
         }
     }
 
@@ -70,6 +60,21 @@ struct SettingsView: View {
             Text("连接")
         } footer: {
             Text("开启后，每次进入 App 或回到前台时自动连接最近一次使用的车机（约 20 秒内不重复尝试）。")
+        }
+    }
+
+    private var appearanceSection: some View {
+        Section {
+            Picker("主题", selection: $settings.appearance) {
+                ForEach(AppAppearance.allCases) { a in
+                    Text(a.title).tag(a)
+                }
+            }
+            .pickerStyle(.segmented)
+        } header: {
+            Text("外观")
+        } footer: {
+            Text("默认「跟随系统」，随 iOS 浅色/深色自动切换全部页面；也可强制保持浅色或深色。")
         }
     }
 
@@ -116,10 +121,7 @@ struct SettingsView: View {
                        value: "VLC（流式）+ AVPlayer（本地）")
 
             Button {
-                Task {
-                    await updateChecker.check(silent: false)
-                    if updateChecker.available != nil { showUpdateDetail = true }
-                }
+                Task { await updateChecker.check(silent: false) }
             } label: {
                 HStack {
                     Label("检查更新", systemImage: "arrow.triangle.2.circlepath")
@@ -134,7 +136,11 @@ struct SettingsView: View {
                     } else if updateChecker.available != nil {
                         Text("有新版本")
                             .font(.caption)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(CL.orange)
+                    } else {
+                        Text(UpdateChecker.currentDisplay)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
             }

@@ -20,6 +20,8 @@ struct RemoteAlbumContent: View {
     @State private var showDatePicker = false
     @State private var selectMode = false
     @State private var selection = Set<String>()
+    /// 区间选择的锚点（先点一个，再长按另一个 = 整段选中）
+    @State private var anchorID: String?
     @State private var playerFile: CarFile?
     @State private var preview: CarFile?
     @AppStorage("remoteListMode") private var listMode = false
@@ -31,20 +33,51 @@ struct RemoteAlbumContent: View {
             AlbumTopBar(title: showDownloads ? "下载中" : category.title) {
                 HStack(spacing: 8) {
                     if !showDownloads {
-                        Button {
-                            downloadAllPending()
-                        } label: {
-                            CircleIcon(system: "arrow.down.circle")
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(pendingFiles.isEmpty)
+                        if selectMode {
+                            Button {
+                                toggleSelectAll()
+                            } label: {
+                                Text(selectedAll ? "全不选" : "全选")
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundStyle(CL.blue)
+                            }
+                            .buttonStyle(.plain)
+                            Button {
+                                selectMode = false
+                                selection.removeAll()
+                                anchorID = nil
+                            } label: {
+                                Text("完成")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(CL.blue)
+                            }
+                            .buttonStyle(.plain)
+                        } else {
+                            Button {
+                                downloadAllPending()
+                            } label: {
+                                CircleIcon(system: "arrow.down.circle")
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(pendingFiles.isEmpty)
 
-                        Button {
-                            listMode.toggle()
-                        } label: {
-                            CircleIcon(system: listMode ? "square.grid.2x2" : "list.bullet", hot: true)
+                            Button {
+                                listMode.toggle()
+                            } label: {
+                                CircleIcon(system: listMode ? "square.grid.2x2" : "list.bullet", hot: true)
+                            }
+                            .buttonStyle(.plain)
+
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.15)) { selectMode = true }
+                            } label: {
+                                Text("选择")
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundStyle(CL.blue)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(filtered.isEmpty)
                         }
-                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -80,6 +113,11 @@ struct RemoteAlbumContent: View {
         .onChange(of: category) { _ in
             selection.removeAll()
             selectMode = false
+            anchorID = nil
+        }
+        .onChange(of: filterDay) { _ in
+            selection.removeAll()
+            anchorID = nil
         }
     }
 
@@ -117,6 +155,48 @@ struct RemoteAlbumContent: View {
         filtered.filter { !library.isDownloaded($0) }
     }
 
+    private var selectedAll: Bool {
+        !filtered.isEmpty && filtered.allSatisfy { selection.contains($0.id) }
+    }
+
+    // MARK: 多选工具（全选 / 区间 / 整组）
+
+    private func toggleSelectAll() {
+        if selectedAll {
+            selection.removeAll()
+            anchorID = nil
+        } else {
+            selection = Set(filtered.map(\.id))
+        }
+    }
+
+    private func toggleSelection(_ f: CarFile) {
+        if selection.contains(f.id) {
+            selection.remove(f.id)
+        } else {
+            selection.insert(f.id)
+        }
+        anchorID = f.id
+    }
+
+    /// 长按 = 从锚点到当前项整段选中（连续几十段一次搞定）
+    private func selectRange(to f: CarFile) {
+        guard let anchor = anchorID,
+              let i = filtered.firstIndex(where: { $0.id == anchor }),
+              let j = filtered.firstIndex(where: { $0.id == f.id }) else {
+            selection.insert(f.id)
+            anchorID = f.id
+            return
+        }
+        let range = i <= j ? i...j : j...i
+        for k in range { selection.insert(filtered[k].id) }
+        anchorID = f.id
+    }
+
+    private func selectGroup(_ items: [CarFile]) {
+        for f in items { selection.insert(f.id) }
+    }
+
     // MARK: 筛选 chips（全部 / 前摄 / 后摄 / 自由 / 未下载）
 
     private var chipsRow: some View {
@@ -151,7 +231,7 @@ struct RemoteAlbumContent: View {
                     Image(systemName: "chevron.down")
                         .font(.system(size: 8, weight: .semibold))
                 }
-                .foregroundStyle(Color.blue)
+                .foregroundStyle(CL.blue)
             }
             .buttonStyle(.plain)
 
@@ -163,18 +243,18 @@ struct RemoteAlbumContent: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 4)
-        .background(Color(.systemGroupedBackground))
+        .background(CL.page)
     }
 
     private func chip(_ title: String, active: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
                 .font(.system(size: 10.5, weight: active ? .semibold : .regular))
-                .foregroundStyle(active ? Color(red: 0.05, green: 0.27, blue: 0.49) : Color.secondary)
+                .foregroundStyle(active ? CL.blueInk : Color.secondary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 .background(
-                    Capsule().fill(active ? Color.blue.opacity(0.14) : Color(.tertiarySystemFill))
+                    Capsule().fill(active ? CL.blueBg : Color(.tertiarySystemFill))
                 )
         }
         .buttonStyle(.plain)
@@ -270,13 +350,31 @@ struct RemoteAlbumContent: View {
     }
 
     private func dateHeader(_ day: String, _ items: [CarFile]) -> some View {
-        HStack {
+        HStack(spacing: 6) {
             Text(day)
                 .font(.system(size: 11.5, weight: .bold))
             Spacer()
             Text("\(items.count) \(category == .snapshot ? "张" : "段")")
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
+            if selectMode {
+                let allIn = items.allSatisfy { selection.contains($0.id) }
+                Button {
+                    if allIn {
+                        for f in items { selection.remove(f.id) }
+                    } else {
+                        selectGroup(items)
+                    }
+                } label: {
+                    Text(allIn ? "取消本组" : "选本组")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(CL.blue)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(CL.blueBg))
+                }
+                .buttonStyle(.plain)
+            }
         }
         .padding(.horizontal, 12)
         .padding(.top, 6)
@@ -286,7 +384,9 @@ struct RemoteAlbumContent: View {
     // MARK: 2 列大图（缩略图下方两行说明）
 
     private func gridCell(_ f: CarFile) -> some View {
-        Button {
+        let badge = downloads.badge(for: f.path)
+        let downloaded = library.isDownloaded(f)
+        return Button {
             handleTap(f)
         } label: {
             VStack(alignment: .leading, spacing: 2) {
@@ -320,23 +420,32 @@ struct RemoteAlbumContent: View {
                     if f.locked == true {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.system(size: 11))
-                            .foregroundStyle(.red)
+                            .foregroundStyle(CL.red)
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                             .padding(.top, 2)
                     }
-                    if library.isDownloaded(f) {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 14, height: 14)
-                            .background(Circle().fill(Color.green))
+                    // 下载中：封面上直接给进度（环形 + 百分比），不用翻到「下载中」才看得到
+                    if let b = badge, b.active {
+                        VStack(spacing: 2) {
+                            DownloadProgressBadge(progress: b.progress, paused: b.paused)
+                            if b.state == .waiting {
+                                Text("排队")
+                                    .font(.system(size: 8, weight: .bold))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 4)
+                                    .background(Capsule().fill(Color.black.opacity(0.55)))
+                            }
+                        }
+                    } else if downloaded {
+                        LocalCheckDot()
                             .padding(3)
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                     }
                     if selectMode {
                         Image(systemName: selection.contains(f.id) ? "checkmark.circle.fill" : "circle")
                             .font(.system(size: 17))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(selection.contains(f.id) ? CL.blue : .white)
+                            .background(Circle().fill(Color.black.opacity(selection.contains(f.id) ? 0 : 0.18)))
                             .shadow(radius: 2)
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                             .padding(4)
@@ -346,7 +455,7 @@ struct RemoteAlbumContent: View {
                 .clipShape(RoundedRectangle(cornerRadius: 6))
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
-                        .stroke(selection.contains(f.id) ? Color.blue : Color.clear, lineWidth: 2)
+                        .stroke(selection.contains(f.id) ? CL.blue : Color.clear, lineWidth: 2)
                 )
 
                 HStack(spacing: 3) {
@@ -355,18 +464,18 @@ struct RemoteAlbumContent: View {
                         .font(.system(size: 10.5, weight: .semibold))
                         .lineLimit(1)
                 }
-                Text(subtitle(f))
-                    .font(.system(size: 9.5))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                caption(f)
             }
         }
         .buttonStyle(.plain)
         .simultaneousGesture(
-            LongPressGesture(minimumDuration: 0.4).onEnded { _ in
-                if !selectMode {
+            LongPressGesture(minimumDuration: 0.35).onEnded { _ in
+                if selectMode {
+                    selectRange(to: f)
+                } else {
                     selectMode = true
                     selection.insert(f.id)
+                    anchorID = f.id
                 }
             }
         )
@@ -375,7 +484,9 @@ struct RemoteAlbumContent: View {
     // MARK: 列表行（56×34 缩略图 + 两行文字 + 右侧状态）
 
     private func listRow(_ f: CarFile) -> some View {
-        HStack(spacing: 8) {
+        let badge = downloads.badge(for: f.path)
+        let downloaded = library.isDownloaded(f)
+        return HStack(spacing: 8) {
             ZStack {
                 RoundedRectangle(cornerRadius: 5)
                     .fill(f.cameraEnum.color.opacity(0.22))
@@ -391,6 +502,9 @@ struct RemoteAlbumContent: View {
                 Image(systemName: f.isVideo ? "play.fill" : "photo.fill")
                     .font(.system(size: 9))
                     .foregroundStyle(.white)
+                if let b = badge, b.active {
+                    DownloadProgressBadge(progress: b.progress, paused: b.paused)
+                }
             }
             .frame(width: 56, height: 34)
             .clipShape(RoundedRectangle(cornerRadius: 5))
@@ -403,24 +517,21 @@ struct RemoteAlbumContent: View {
                     if f.locked == true {
                         Image(systemName: "lock.fill")
                             .font(.system(size: 8))
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(CL.orange)
                     }
                 }
-                Text(subtitle(f))
-                    .font(.system(size: 9.5))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                caption(f)
             }
             Spacer(minLength: 4)
 
             if selectMode {
                 Image(systemName: selection.contains(f.id) ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 17))
-                    .foregroundStyle(selection.contains(f.id) ? Color.blue : Color.secondary)
-            } else if library.isDownloaded(f) {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(.green)
+                    .foregroundStyle(selection.contains(f.id) ? CL.blue : Color.secondary)
+            } else if let b = badge, b.active {
+                DownloadingChip(progress: b.progress, paused: b.paused)
+            } else if downloaded {
+                LocalTag(compact: true)
             } else {
                 // 行内下载按钮独立成 Button，其余区域走整行手势
                 Button {
@@ -428,7 +539,7 @@ struct RemoteAlbumContent: View {
                 } label: {
                     Image(systemName: "arrow.down.circle")
                         .font(.system(size: 15))
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(CL.blue)
                         .frame(width: 30, height: 30)
                         .contentShape(Rectangle())
                 }
@@ -439,15 +550,18 @@ struct RemoteAlbumContent: View {
         .padding(.vertical, 5)
         .contentShape(Rectangle())
         .onTapGesture { handleTap(f) }
-        .onLongPressGesture(minimumDuration: 0.4) {
-            if !selectMode {
+        .onLongPressGesture(minimumDuration: 0.35) {
+            if selectMode {
+                selectRange(to: f)
+            } else {
                 selectMode = true
                 selection.insert(f.id)
+                anchorID = f.id
             }
         }
         .overlay(alignment: .bottom) {
             Rectangle()
-                .fill(Color.black.opacity(0.05))
+                .fill(CL.line)
                 .frame(height: 0.5)
                 .padding(.leading, 76)
         }
@@ -461,23 +575,56 @@ struct RemoteAlbumContent: View {
         let bytes = pending.reduce(Int64(0)) { $0 + $1.size }
         let skipped = picked.count - pending.count
 
-        return Button {
-            _ = downloads.add(pending, target: .dashcam(category))
-            selection.removeAll()
-            selectMode = false
-        } label: {
-            Text("下载所选（\(pending.count) 新）· \(Fmt.bytes(bytes))" + (skipped > 0 ? " · 自动跳过 \(skipped) 段已下载" : ""))
-                .font(.system(size: 11.5, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 9)
-                .background(RoundedRectangle(cornerRadius: 10).fill(Color.blue))
-                .shadow(color: Color.blue.opacity(0.35), radius: 6, x: 0, y: 3)
+        return VStack(spacing: 6) {
+            HStack(spacing: 10) {
+                Text("已选 \(picked.count) / \(filtered.count)")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+                Button {
+                    selection = Set(filtered.map(\.id).filter { !selection.contains($0) })
+                } label: {
+                    Text("反选")
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(CL.blue)
+                }
+                .buttonStyle(.plain)
+                Button {
+                    selection.removeAll()
+                    anchorID = nil
+                } label: {
+                    Text("清空")
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                Spacer()
+                Text(skipped > 0 ? "自动跳过 \(skipped) 段已下载" : "")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 4)
+
+            Button {
+                _ = downloads.add(pending, target: .dashcam(category))
+                selection.removeAll()
+                selectMode = false
+                anchorID = nil
+            } label: {
+                Text("下载所选（\(pending.count) 新）· \(Fmt.bytes(bytes))")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 9)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(CL.blue))
+                    .shadow(color: CL.blue.opacity(0.35), radius: 6, x: 0, y: 3)
+            }
+            .buttonStyle(.plain)
+            .disabled(pending.isEmpty)
         }
-        .buttonStyle(.plain)
-        .disabled(pending.isEmpty)
         .padding(.horizontal, 10)
+        .padding(.top, 4)
         .padding(.bottom, 8)
+        .background(.ultraThinMaterial)
     }
 
     // MARK: 工具
@@ -487,16 +634,29 @@ struct RemoteAlbumContent: View {
         if let d = DurationCache.duration(for: f.path) {
             parts.append(Fmt.duration(d))
         }
-        if library.isDownloaded(f) {
-            parts.append("已在本地")
-        }
         return parts.joined(separator: " · ")
+    }
+
+    /// 副标题（大小 · 时长 · 已在本地），「已在本地」用设计图的 #1D7A34 绿
+    private func caption(_ f: CarFile) -> some View {
+        HStack(spacing: 0) {
+            Text(subtitle(f))
+                .foregroundStyle(.secondary)
+            if library.isDownloaded(f) {
+                Text(" · ")
+                    .foregroundStyle(.secondary)
+                Text("已在本地")
+                    .foregroundStyle(CL.okText)
+                    .fontWeight(.semibold)
+            }
+        }
+        .font(.system(size: 9.5))
+        .lineLimit(1)
     }
 
     private func handleTap(_ f: CarFile) {
         if selectMode {
-            if selection.contains(f.id) { selection.remove(f.id) }
-            else { selection.insert(f.id) }
+            toggleSelection(f)
         } else if f.isVideo {
             playerFile = f
         } else {
@@ -567,7 +727,7 @@ struct SubTabsBar: View {
                 HStack(spacing: 3) {
                     Text(title)
                         .font(.system(size: 11, weight: active ? .bold : .regular))
-                        .foregroundStyle(active ? Color.blue : Color.secondary)
+                        .foregroundStyle(active ? CL.blue : Color.secondary)
                         .lineLimit(1)
                     if badge > 0 {
                         Text("\(badge)")
@@ -579,7 +739,7 @@ struct SubTabsBar: View {
                     }
                 }
                 Rectangle()
-                    .fill(active ? Color.blue : Color.clear)
+                    .fill(active ? CL.blue : Color.clear)
                     .frame(width: 34, height: 2)
             }
             .frame(maxWidth: .infinity)

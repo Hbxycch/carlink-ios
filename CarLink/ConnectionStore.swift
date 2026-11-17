@@ -12,6 +12,7 @@ final class ConnectionStore: ObservableObject {
     @Published private(set) var state: ConnectionState = .disconnected
     @Published private(set) var carInfo: CarInfo?
     @Published private(set) var status: StatusResponse?
+    @Published private(set) var volumes: [VolumeInfo] = []
     @Published private(set) var lastError: String?
     @Published private(set) var savedDevices: [SavedDevice] = []
 
@@ -47,6 +48,7 @@ final class ConnectionStore: ObservableObject {
                 self.carInfo = info
                 self.state = .connected
                 self.remember(SavedDevice(host: host, port: port, name: info.deviceName))
+                self.volumes = (try? await api.volumes()) ?? []
                 self.startMonitor()
             } catch {
                 if self.state == .connecting {
@@ -88,6 +90,7 @@ final class ConnectionStore: ObservableObject {
         client = nil
         carInfo = nil
         status = nil
+        volumes = []
         state = .disconnected
     }
 
@@ -137,6 +140,10 @@ final class ConnectionStore: ObservableObject {
                 if let s = try? await api.status() {
                     self.status = s
                 }
+                // 存储余量变化较慢，每 5s 一起刷新（代价很小，卡片保持实时）
+                if let v = try? await api.volumes() {
+                    self.volumes = v
+                }
             }
         }
     }
@@ -146,6 +153,21 @@ final class ConnectionStore: ObservableObject {
         guard let api = client else { return }
         carInfo = try? await api.info()
         status = try? await api.status()
+        volumes = (try? await api.volumes()) ?? volumes
+    }
+
+    // MARK: - 存储卷便捷访问
+
+    /// 内置存储
+    var internalVolume: VolumeInfo? {
+        volumes.first { ($0.type ?? "") == "internal" && $0.isMounted }
+            ?? volumes.first { !($0.removable ?? false) }
+    }
+
+    /// SD 卡 / U 盘（可移动）
+    var externalVolume: VolumeInfo? {
+        volumes.first { ($0.type ?? "") == "sd" && $0.isMounted }
+            ?? volumes.first { ($0.removable ?? false) && $0.isMounted }
     }
 
     static func describe(_ error: Error) -> String {
