@@ -120,6 +120,23 @@ struct CarInfo: Codable {
     let switches: Switches?
     let counts: Counts?
 
+    /// 容错解码：老版本车机缺字段（如 port / version）也允许连上，
+    /// 避免浏览器能打开、App 却因 JSON 解析失败连不上的情况
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        deviceName = (try? c.decodeIfPresent(String.self, forKey: .deviceName)) ?? "车机"
+        version = (try? c.decodeIfPresent(String.self, forKey: .version)) ?? "?"
+        versionCode = try? c.decodeIfPresent(Int.self, forKey: .versionCode)
+        port = (try? c.decodeIfPresent(Int.self, forKey: .port)) ?? 8080
+        ip = try? c.decodeIfPresent(String.self, forKey: .ip)
+        theme = try? c.decodeIfPresent(String.self, forKey: .theme)
+        model = try? c.decodeIfPresent(String.self, forKey: .model)
+        brand = try? c.decodeIfPresent(String.self, forKey: .brand)
+        wifi = try? c.decodeIfPresent(WifiInfo.self, forKey: .wifi)
+        switches = try? c.decodeIfPresent(Switches.self, forKey: .switches)
+        counts = try? c.decodeIfPresent(Counts.self, forKey: .counts)
+    }
+
     /// 机型展示："ROCO K706"（无 model 时退回 brand）
     var modelText: String? {
         if let m = model, !m.isEmpty { return m }

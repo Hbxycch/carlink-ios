@@ -3,14 +3,17 @@ import UIKit
 
 /// 连接诊断页：查看 / 复制连接日志（配合车机端 /api/connlog 双向排查）
 struct ConnDiagnosticsView: View {
+    @EnvironmentObject private var conn: ConnectionStore
     @ObservedObject private var store = ConnLogStore.shared
     @State private var copied = false
+    @State private var probing = false
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 4) {
                     hintCard
+                    probeCard
 
                     ForEach(Array(store.snapshot().enumerated()), id: \.offset) { idx, line in
                         Text(line)
@@ -58,11 +61,94 @@ struct ConnDiagnosticsView: View {
         }
     }
 
+    /// 自检卡片：一键探测 /api/info、/api/volumes、/web，不需要另开 Safari
+    private var probeCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let target = probeTarget {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("自检当前车机")
+                            .font(.system(size: 12, weight: .bold))
+                        Text("http://\(target.host):\(target.port)")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button {
+                        probe(target.host, target.port)
+                    } label: {
+                        if probing {
+                            ProgressView()
+                        } else {
+                            Text("开始自检")
+                                .font(.system(size: 12, weight: .semibold))
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(probing)
+                }
+            } else {
+                Text("自检：先连接或保存一个车机地址")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color(.secondarySystemFill)))
+        .padding(.horizontal, 12)
+    }
+
+    private var probeTarget: (host: String, port: Int)? {
+        if let api = conn.client { return (api.host, api.port) }
+        if let d = conn.savedDevices.first { return (d.host, d.port) }
+        return nil
+    }
+
+    /// 自检：串行跑三个请求，结果写进日志（App 内即可判断"请求有没有到服务端 / 服务端回了什么"）
+    @MainActor
+    private func probe(_ host: String, _ port: Int) {
+        probing = true
+        ConnLogStore.shared.log("TEST", "=== 自检开始 \(host):\(port) ===")
+        Task {
+            let api = APIClient(host: host, port: port)
+            func ms(_ t: Date) -> Int { Int(Date().timeIntervalSince(t) * 1000) }
+
+            var t = Date()
+            do {
+                let info = try await api.info()
+                ConnLogStore.shared.log("TEST", "① /api/info 通：\(info.deviceName) v\(info.version)（\(ms(t))ms）")
+            } catch {
+                ConnLogStore.shared.log("ERR", "① /api/info 失败：\(ConnLogStore.describe(error))（\(ms(t))ms）")
+            }
+
+            t = Date()
+            do {
+                let (code, body) = try await api.raw(path: "/api/volumes")
+                ConnLogStore.shared.log("TEST", "② /api/volumes HTTP \(code)（\(ms(t))ms）\(body.prefix(160))")
+            } catch {
+                ConnLogStore.shared.log("ERR", "② /api/volumes 失败：\(ConnLogStore.describe(error))（\(ms(t))ms）")
+            }
+
+            t = Date()
+            do {
+                let (code, body) = try await api.raw(path: "/web")
+                ConnLogStore.shared.log("TEST", "③ /web HTTP \(code)（\(ms(t))ms）\(body.prefix(120))")
+            } catch {
+                ConnLogStore.shared.log("ERR", "③ /web 失败：\(ConnLogStore.describe(error))（\(ms(t))ms）")
+            }
+
+            ConnLogStore.shared.log("TEST", "=== 自检结束 ===")
+            probing = false
+        }
+    }
+
     private var hintCard: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("排查指引")
                 .font(.system(size: 12, weight: .bold))
-            Text("① 用 Safari 打开 http://车机IP:8080/web 能访问但 App 连不上 → 多为 iOS「本地网络」权限被拒（设置 → 隐私与安全性 → 本地网络 → CarLink）。\n② ERR 行里的 domain/code 是定位关键：NSURLErrorDomain -1004=端口未开、-1002=IP 错、超时=网络不通或权限被拒。\n③ 点右上角复制，把日志发给开发者即可。")
+            Text("先点上方「开始自检」，会依次请求 /api/info、/api/volumes、/web 并写进日志。\n① 若 Safari 能开 http://车机IP:8080/web 但自检① /api/info 失败 → 多为 iOS「本地网络」权限被拒（设置 → 隐私与安全性 → 本地网络 → CarLink）。\n② 若自检①失败但日志里是 HTTP 错误并带原始响应 → 车机端版本旧/字段缺失，把日志发开发者。\n③ ERR 行的 domain/code 是定位关键：-1004 端口未开、-1002 IP 错、超时=网络不通或权限被拒。")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
         }

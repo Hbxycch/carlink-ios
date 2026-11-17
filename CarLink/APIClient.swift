@@ -37,8 +37,32 @@ final class APIClient {
 
     private func getJSON<T: Decodable>(_ path: String, query: [String: String] = [:]) async throws -> T {
         let (data, resp) = try await session.data(from: url(path, query: query))
-        try Self.checkHTTP(resp)
-        return try JSONDecoder().decode(T.self, from: data)
+        if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            let raw = Self.preview(data)
+            ConnLogStore.shared.log("ERR", "HTTP \(http.statusCode) \(path) 响应: \(raw)")
+            throw APIError("HTTP \(http.statusCode)：\(raw)")
+        }
+        do {
+            return try JSONDecoder().decode(T.self, from: data)
+        } catch {
+            let raw = Self.preview(data)
+            ConnLogStore.shared.log("ERR", "解析 \(path) 失败: \(ConnLogStore.describe(error)) 原始响应: \(raw)")
+            throw APIError("解析 \(path) 响应失败：\(raw)")
+        }
+    }
+
+    /// 响应体预览（前 400 字符，用于诊断日志）
+    static func preview(_ data: Data) -> String {
+        if data.isEmpty { return "<空响应 0 字节>" }
+        let s = String(data: data.prefix(400), encoding: .utf8) ?? "<\(data.count) 字节二进制>"
+        return s.replacingOccurrences(of: "\n", with: " ")
+    }
+
+    /// 原始 GET（诊断用：拿状态码 + 响应体前 400 字符，不做 JSON 解析）
+    func raw(path: String) async throws -> (Int, String) {
+        let (data, resp) = try await session.data(from: url(path))
+        let code = (resp as? HTTPURLResponse)?.statusCode ?? -1
+        return (code, Self.preview(data))
     }
 
     static func checkHTTP(_ resp: URLResponse) throws {
