@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 // MARK: - 在线更新（OTA 清单：https://smartdash-ota.w.zood.org:8888/carlink/ios-version.json）
 
