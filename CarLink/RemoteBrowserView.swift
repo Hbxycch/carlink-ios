@@ -406,12 +406,15 @@ struct RemoteAlbumContent: View {
                         }
                     }
                     if f.isVideo {
-                        Image(systemName: "play.fill")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 24, height: 24)
-                            .background(Circle().fill(Color.black.opacity(0.28)))
-                            .overlay(Circle().stroke(Color.white.opacity(0.95), lineWidth: 1.2))
+                        // 下载中时让位给进度环，避免图标叠在一起
+                        if !(badge?.active ?? false) {
+                            Image(systemName: "play.fill")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(.white)
+                                .frame(width: 24, height: 24)
+                                .background(Circle().fill(Color.black.opacity(0.28)))
+                                .overlay(Circle().stroke(Color.white.opacity(0.95), lineWidth: 1.2))
+                        }
                     } else {
                         Image(systemName: "photo.fill")
                             .font(.system(size: 16))
@@ -499,11 +502,12 @@ struct RemoteAlbumContent: View {
                         }
                     }
                 }
-                Image(systemName: f.isVideo ? "play.fill" : "photo.fill")
-                    .font(.system(size: 9))
-                    .foregroundStyle(.white)
                 if let b = badge, b.active {
                     DownloadProgressBadge(progress: b.progress, paused: b.paused)
+                } else {
+                    Image(systemName: f.isVideo ? "play.fill" : "photo.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.white)
                 }
             }
             .frame(width: 56, height: 34)
