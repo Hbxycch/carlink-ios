@@ -383,6 +383,18 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
             downloadedAt: Date()
         )
         record.duration = duration
+
+        // 封面：下载完成后抓取车机端缩略图缓存到本地（本地文件页显示封面）
+        if item.file.isVideo, let thumbPath = item.file.thumb, let api = connection?.client {
+            if let data = try? await api.fetchRaw(path: thumbPath), !data.isEmpty,
+               data.count < 4 * 1024 * 1024 {
+                let safeName = record.id
+                    .replacingOccurrences(of: "/", with: "_")
+                    .replacingOccurrences(of: "#", with: "-") + ".jpg"
+                record.thumbPath = LocalThumbStore.save(data, name: safeName)
+            }
+        }
+
         library?.add(record)
         if let d = duration { DurationCache.set(d, for: item.file.path) }
         item.state = .done

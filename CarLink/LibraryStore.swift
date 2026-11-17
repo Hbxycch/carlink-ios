@@ -21,6 +21,8 @@ struct LocalRecord: Codable, Identifiable, Equatable {
     let localRef: String          // PHAsset localIdentifier 或相对文件名
     let downloadedAt: Date
     var duration: Double?
+    /// 本地封面缓存文件名（Documents/CarLink/Thumbs/ 下）
+    var thumbPath: String?
 
     var id: String { "\(sourcePath)#\(sourceSize)" }
     var date: Date { Date(timeIntervalSince1970: modified / 1000.0) }
@@ -94,6 +96,7 @@ final class LibraryStore: ObservableObject {
         case .fileTS:
             try? FileManager.default.removeItem(at: Self.tsDirectory.appending(path: r.localRef))
         }
+        LocalThumbStore.delete(record: r)
         records.removeAll { $0.id == r.id }
         save()
     }

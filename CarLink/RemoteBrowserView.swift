@@ -57,6 +57,7 @@ struct RemoteAlbumContent: View {
 
             if !showDownloads {
                 chipsRow
+                dateFilterBar
             }
 
             content
@@ -133,6 +134,36 @@ struct RemoteAlbumContent: View {
             .padding(.horizontal, 12)
         }
         .padding(.vertical, 5)
+    }
+
+    // MARK: 常驻日期筛选栏（设计图 3.3：📅 日期 ⌄ · N 段 · 已下载 M）
+
+    private var dateFilterBar: some View {
+        HStack {
+            Button {
+                showDatePicker = true
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "calendar")
+                        .font(.system(size: 10))
+                    Text(filterDay == nil ? "全部日期" : Fmt.day(filterDay!))
+                        .font(.system(size: 11.5, weight: .bold))
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .semibold))
+                }
+                .foregroundStyle(Color.blue)
+            }
+            .buttonStyle(.plain)
+
+            Spacer()
+
+            Text("\(filtered.count) \(category == .snapshot ? "张" : "段") · 已下载 \(library.downloadedCount(in: filtered))")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 4)
+        .background(Color(.systemGroupedBackground))
     }
 
     private func chip(_ title: String, active: Bool, action: @escaping () -> Void) -> some View {
@@ -240,22 +271,10 @@ struct RemoteAlbumContent: View {
 
     private func dateHeader(_ day: String, _ items: [CarFile]) -> some View {
         HStack {
-            Button {
-                showDatePicker = true
-            } label: {
-                HStack(spacing: 3) {
-                    Image(systemName: "calendar")
-                        .font(.system(size: 10))
-                    Text(day)
-                        .font(.system(size: 11.5, weight: .bold))
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 8, weight: .semibold))
-                }
-                .foregroundStyle(Color.blue)
-            }
-            .buttonStyle(.plain)
+            Text(day)
+                .font(.system(size: 11.5, weight: .bold))
             Spacer()
-            Text("\(items.count) \(category == .snapshot ? "张" : "段") · 已下载 \(library.downloadedCount(in: items))")
+            Text("\(items.count) \(category == .snapshot ? "张" : "段")")
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
         }

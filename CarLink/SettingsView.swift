@@ -16,6 +16,7 @@ struct SettingsView: View {
             List {
                 connectionSection
                 downloadSection
+                playbackSection
                 aboutSection
             }
             .listStyle(.insetGrouped)
@@ -33,7 +34,7 @@ struct SettingsView: View {
     }
 
     private var connectionSection: some View {
-        Section("连接") {
+        Section {
             if conn.isConnected {
                 LabeledRow(icon: "car.fill", title: "当前车机", value: conn.deviceName)
                 LabeledRow(icon: "link", title: "地址",
@@ -46,6 +47,8 @@ struct SettingsView: View {
             } else {
                 LabeledRow(icon: "car.2", title: "当前车机", value: "未连接")
             }
+
+            Toggle("自动连接上次车机", isOn: $settings.autoConnect)
 
             if !conn.savedDevices.isEmpty {
                 ForEach(conn.savedDevices) { d in
@@ -63,6 +66,20 @@ struct SettingsView: View {
                     }
                 }
             }
+        } header: {
+            Text("连接")
+        } footer: {
+            Text("开启后，每次进入 App 或回到前台时自动连接最近一次使用的车机（约 20 秒内不重复尝试）。")
+        }
+    }
+
+    private var playbackSection: some View {
+        Section {
+            Toggle("播完自动连播下一段", isOn: $settings.autoPlayNext)
+        } header: {
+            Text("播放")
+        } footer: {
+            Text("循环文件按时间顺序播完自动切到下一段；倍速按分类记忆，三路互切保持播放进度。")
         }
     }
 

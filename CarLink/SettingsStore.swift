@@ -11,6 +11,10 @@ final class SettingsStore: ObservableObject {
     @AppStorage("saveToPhotos") var saveToPhotos = true
     /// 相册页默认视图（false=缩略图 2 列，true=列表）
     @AppStorage("listMode") var listMode = false
+    /// 启动 / 回前台时自动连接最近一次使用的车机
+    @AppStorage("autoConnect") var autoConnect = true
+    /// 视频播完自动连播下一段（按时间顺序）
+    @AppStorage("autoPlayNext") var autoPlayNext = true
 
     /// 网络类型监测（供下载调度订阅）
     @Published var isWiFi = true

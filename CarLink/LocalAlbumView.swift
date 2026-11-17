@@ -422,7 +422,10 @@ struct LocalThumb: View {
                     DispatchQueue.main.async { self.image = img }
                 }
             case .fileTS:
-                break
+                // 本地封面：车机缩略图缓存 / 图片直读 / mp4 首帧
+                if let img = await LocalThumbStore.load(record: record) {
+                    self.image = img
+                }
             }
         }
     }

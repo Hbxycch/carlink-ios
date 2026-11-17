@@ -92,6 +92,13 @@ final class APIClient {
         return downloadURL(path: t)
     }
 
+    /// 下载原始文件数据（缩略图等小文件）
+    func fetchRaw(path: String) async throws -> Data {
+        let (data, resp) = try await session.data(from: downloadURL(path: path))
+        try Self.checkHTTP(resp)
+        return data
+    }
+
     // MARK: - 分片上传
 
     func uploadInit(name: String, size: Int64) async throws -> UploadInitResponse {

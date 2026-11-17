@@ -61,6 +61,18 @@ final class ConnectionStore: ObservableObject {
         connect(host: device.host, port: device.port)
     }
 
+    // MARK: 自动连接
+
+    private var lastAutoConnectAt: Date?
+
+    /// 启动 / 回到前台时自动连接最近一次使用的车机（20s 冷却，避免反复重试不可达设备）
+    func autoConnectIfPossible() {
+        guard state == .disconnected, let device = savedDevices.first else { return }
+        if let last = lastAutoConnectAt, Date().timeIntervalSince(last) < 20 { return }
+        lastAutoConnectAt = Date()
+        connect(device: device)
+    }
+
     /// 解析车机二维码内容（http://192.168.1.100:8080/web）
     func connectQR(_ text: String) -> Bool {
         guard let comps = URLComponents(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),

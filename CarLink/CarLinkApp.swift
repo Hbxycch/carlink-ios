@@ -21,6 +21,7 @@ struct CarLinkApp: App {
     @StateObject private var uploads = UploadManager()
     @StateObject private var nav = AppNav()
     @StateObject private var updateChecker = UpdateChecker()
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
         let connection = ConnectionStore()
@@ -50,8 +51,16 @@ struct CarLinkApp: App {
                 .tint(Color(red: 0.18, green: 0.49, blue: 0.88))
                 .task {
                     settings.startMonitoring()
+                    // 启动自动连接上次使用的车机
+                    if settings.autoConnect { conn.autoConnectIfPossible() }
                     // 启动后静默检查更新（无更新/已忽略不提示）
                     await updateChecker.check(silent: true)
+                }
+                .onChange(of: scenePhase) { phase in
+                    // 回到前台时若已断开，自动重连上次车机（带冷却）
+                    if phase == .active, settings.autoConnect {
+                        conn.autoConnectIfPossible()
+                    }
                 }
         }
     }
