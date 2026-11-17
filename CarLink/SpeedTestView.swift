@@ -102,11 +102,15 @@ struct SpeedTestView: View {
         phase = .downloading
         do {
             var file: CarFile?
-            let dashcamFiles = try await api.dashcam(category: .loop)
-            if let f = dashcamFiles.first(where: { $0.size > 1_000_000 }) {
+            // 只取最近一批文件用于测速：上万条录像时绝不能拉全量列表
+            let loopPage = try await api.filesPage(type: "dashcam",
+                                                   category: MediaCategory.loop.apiValue,
+                                                   limit: 30, offset: 0)
+            if let f = loopPage.files.first(where: { $0.size > 1_000_000 }) {
                 file = f
-            } else if let s = try await api.screenshots().first(where: { $0.size > 500_000 }) {
-                file = s
+            } else {
+                let shotPage = try await api.filesPage(type: "screenshot", limit: 30, offset: 0)
+                if let s = shotPage.files.first(where: { $0.size > 500_000 }) { file = s }
             }
             guard let f = file else {
                 errorMessage = "车机上没有可用于测速的文件"

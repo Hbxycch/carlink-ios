@@ -81,6 +81,20 @@ struct FileListResponse: Codable {
     let type: String?
     let category: String?
     let total: Int?
+    /// 分页：车机端还会返回 hasMore / indexing / scanned（老版本没有这些字段）
+    let hasMore: Bool?
+    let indexing: Bool?
+    let scanned: Int?
+}
+
+/// 一页文件列表（车机端是「后台建索引 + 内存切片」，索引没建好时 indexing = true）
+struct FilePage {
+    let files: [CarFile]
+    let total: Int
+    let hasMore: Bool
+    let indexing: Bool
+    let scanned: Int
+    var isEmpty: Bool { files.isEmpty && total == 0 }
 }
 
 // MARK: - /api/info 中的 wifi 节点

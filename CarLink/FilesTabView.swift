@@ -146,6 +146,13 @@ struct ScreenshotAlbumContent: View {
     @State private var selectMode = false
     @State private var selection = Set<String>()
     @State private var preview: CarFile?
+    /// 分页：截图也可能上千张，一次只拉一页
+    @State private var hasMore = false
+    @State private var total = 0
+    @State private var indexing = false
+    @State private var scanned = 0
+    @State private var loadingMore = false
+    private let pageSize = 90
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 3), count: 3)
 
@@ -202,7 +209,7 @@ struct ScreenshotAlbumContent: View {
     }
 
     private var subtitleText: String {
-        "Pictures/CarCap · \(files.count) 张 · 由新到旧"
+        "Pictures/CarCap · \(total > 0 ? total : files.count) 张 · 由新到旧"
     }
 
     @ViewBuilder
@@ -221,16 +228,24 @@ struct ScreenshotAlbumContent: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if files.isEmpty {
-            emptyState("暂无截图")
+            emptyState(indexing ? "车机正在建立索引… 已扫描 \(scanned) 项" : "暂无截图")
         } else {
             ScrollView {
-                LazyVGrid(columns: columns, spacing: 3) {
-                    ForEach(files) { f in
-                        cell(f)
+                VStack(spacing: 0) {
+                    LazyVGrid(columns: columns, spacing: 3) {
+                        ForEach(files) { f in
+                            cell(f)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    if hasMore {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .onAppear { Task { await loadMore() } }
                     }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
             }
             .refreshable { await load() }
         }
@@ -343,9 +358,44 @@ struct ScreenshotAlbumContent: View {
         errorText = nil
         defer { loading = false }
         do {
-            files = try await api.screenshots()
+            let page = try await api.filesPage(type: "screenshot", limit: pageSize, offset: 0)
+            apply(page, replace: true)
+            if indexing {
+                loading = false
+                var tries = 0
+                while indexing, tries < 30, !Task.isCancelled {
+                    tries += 1
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    guard let api2 = conn.client,
+                          let p = try? await api2.filesPage(type: "screenshot",
+                                                            limit: pageSize, offset: 0) else { return }
+                    apply(p, replace: true)
+                }
+            }
         } catch {
             errorText = ConnectionStore.describe(error)
+        }
+    }
+
+    private func loadMore() async {
+        guard hasMore, !loadingMore, !indexing, let api = conn.client else { return }
+        loadingMore = true
+        defer { loadingMore = false }
+        guard let page = try? await api.filesPage(type: "screenshot",
+                                                  limit: pageSize, offset: files.count) else { return }
+        apply(page, replace: false)
+    }
+
+    private func apply(_ page: FilePage, replace: Bool) {
+        total = page.total
+        hasMore = page.hasMore
+        indexing = page.indexing
+        scanned = page.scanned
+        if replace {
+            files = page.files
+        } else {
+            let exist = Set(files.map(\.id))
+            files.append(contentsOf: page.files.filter { !exist.contains($0.id) })
         }
     }
 }

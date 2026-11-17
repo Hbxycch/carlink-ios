@@ -13,6 +13,13 @@ struct RemoteAlbumContent: View {
     @State private var files: [CarFile] = []
     @State private var loading = false
     @State private var errorText: String?
+    /// 分页状态：SD 卡上万条录像时只先拉 60 条，滚动到底再追加
+    @State private var hasMore = false
+    @State private var total = 0
+    @State private var indexing = false
+    @State private var scanned = 0
+    @State private var loadingMore = false
+    private let pageSize = 60
     @State private var showDownloads = false
     @State private var cameraFilter = "all"
     @State private var onlyUndownloaded = false
@@ -328,6 +335,7 @@ struct RemoteAlbumContent: View {
                     .padding(.horizontal, 10)
                     .padding(.bottom, 8)
                 }
+                moreFooter
             }
             .padding(.bottom, 56)
         }
@@ -343,10 +351,37 @@ struct RemoteAlbumContent: View {
                         listRow(f)
                     }
                 }
+                moreFooter
             }
             .padding(.bottom, 56)
         }
         .refreshable { await load() }
+    }
+
+    /// 列表底部：索引进度 / 自动加载下一页 / 已到底提示
+    @ViewBuilder
+    private var moreFooter: some View {
+        if indexing {
+            HStack(spacing: 8) {
+                ProgressView().scaleEffect(0.8)
+                Text("车机正在建立索引… 已扫描 \(scanned) 项")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 16)
+        } else if hasMore {
+            ProgressView()
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+                .onAppear { Task { await loadMore() } }
+        } else if total > pageSize {
+            Text("已全部加载 · 共 \(total) \(category == .snapshot ? "张" : "段")")
+                .font(.system(size: 11.5))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+        }
     }
 
     private func dateHeader(_ day: String, _ items: [CarFile]) -> some View {
@@ -685,9 +720,52 @@ struct RemoteAlbumContent: View {
         errorText = nil
         defer { loading = false }
         do {
-            files = try await api.dashcam(category: category)
+            let page = try await api.filesPage(type: "dashcam", category: category.apiValue,
+                                               limit: pageSize, offset: 0)
+            apply(page, replace: true)
+            if indexing {
+                // 车机在后台建索引（上万条录像首次访问）：先结束 loading 显示进度，再自动重试
+                loading = false
+                await retryWhileIndexing()
+            }
         } catch {
             errorText = ConnectionStore.describe(error)
+        }
+    }
+
+    /// 车机建索引期间轮询，最多 45 秒
+    private func retryWhileIndexing() async {
+        var tries = 0
+        while indexing, tries < 30, !Task.isCancelled {
+            tries += 1
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            guard let api = conn.client else { return }
+            guard let p = try? await api.filesPage(type: "dashcam", category: category.apiValue,
+                                                   limit: pageSize, offset: 0) else { return }
+            apply(p, replace: true)
+        }
+    }
+
+    /// 滚动到底追加下一页
+    private func loadMore() async {
+        guard hasMore, !loadingMore, !indexing, let api = conn.client else { return }
+        loadingMore = true
+        defer { loadingMore = false }
+        guard let page = try? await api.filesPage(type: "dashcam", category: category.apiValue,
+                                                  limit: pageSize, offset: files.count) else { return }
+        apply(page, replace: false)
+    }
+
+    private func apply(_ page: FilePage, replace: Bool) {
+        total = page.total
+        hasMore = page.hasMore
+        indexing = page.indexing
+        scanned = page.scanned
+        if replace {
+            files = page.files
+        } else {
+            let exist = Set(files.map(\.id))
+            files.append(contentsOf: page.files.filter { !exist.contains($0.id) })
         }
     }
 }

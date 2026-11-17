@@ -98,6 +98,21 @@ final class APIClient {
         return r.files
     }
 
+    /// 分页拉取（SD 卡上万条录像时必须用这个，否则一次几 MB JSON 会把弱车机拖到超时）
+    func filesPage(type: String, camera: String? = nil, category: String? = nil,
+                   limit: Int = 60, offset: Int = 0, refresh: Bool = false) async throws -> FilePage {
+        var q = ["type": type, "limit": "\(limit)", "offset": "\(offset)"]
+        if let c = camera, c != "all" { q["camera"] = c }
+        if let cat = category { q["category"] = cat }
+        if refresh { q["refresh"] = "1" }
+        let r: FileListResponse = try await getJSON("/api/files", query: q)
+        return FilePage(files: r.files,
+                        total: r.total ?? r.files.count,
+                        hasMore: r.hasMore ?? false,
+                        indexing: r.indexing ?? false,
+                        scanned: r.scanned ?? 0)
+    }
+
     /// 截图列表
     func screenshots() async throws -> [CarFile] {
         try await files(type: "screenshot")
