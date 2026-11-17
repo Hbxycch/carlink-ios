@@ -112,7 +112,8 @@ struct RemoteAlbumContent: View {
                 .presentationDetents([.medium, .large])
         }
         .fullScreenCover(item: $playerFile) { f in
-            PlayerView(file: f, siblings: filtered)
+            PlayerView(items: filtered.map { PlayItem(file: $0, record: library.record(for: $0)) },
+                       startID: f.path)
         }
         .sheet(item: $preview) { f in
             ImagePreviewSheet(file: f)

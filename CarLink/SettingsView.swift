@@ -6,6 +6,7 @@ struct SettingsView: View {
     @EnvironmentObject var conn: ConnectionStore
     @EnvironmentObject var settings: SettingsStore
     @EnvironmentObject var library: LibraryStore
+    @EnvironmentObject var downloads: DownloadManager
     @EnvironmentObject var updateChecker: UpdateChecker
     @Environment(\.openURL) private var openURL
 
@@ -96,7 +97,7 @@ struct SettingsView: View {
         } header: {
             Text("播放")
         } footer: {
-            Text("循环文件按时间顺序播完自动切到下一段；倍速按分类记忆，三路互切保持播放进度。")
+            Text("播放页支持上划看上一条、下滑看下一条，倍速按分类记忆，三路互切保持播放进度；在线与本地文件使用同一套播放界面。")
         }
     }
 
@@ -111,6 +112,21 @@ struct SettingsView: View {
                     .foregroundStyle(.orange)
             }
 
+            Picker("同时下载", selection: $settings.maxConcurrentDownloads) {
+                Text("1 个").tag(1)
+                Text("2 个").tag(2)
+                Text("3 个").tag(3)
+                Text("4 个").tag(4)
+            }
+            .onChange(of: settings.maxConcurrentDownloads) { _ in
+                downloads.reschedule()
+            }
+
+            Toggle("播放时暂停下载", isOn: $settings.pauseDownloadDuringPlayback)
+                .onChange(of: settings.pauseDownloadDuringPlayback) { _ in
+                    downloads.reschedule()
+                }
+
             LabeledRow(icon: "internaldrive", title: "本地已占用",
                        value: Fmt.bytes(library.totalBytes))
             LabeledRow(icon: "photo.on.rectangle", title: "本地文件数",
@@ -118,7 +134,7 @@ struct SettingsView: View {
         } header: {
             Text("下载与保存")
         } footer: {
-            Text("相册保存位置：系统相册 ›「CarLink 车机互传」相簿；转存失败的 .ts 回退文件位于「文件」App › CarLink › CarLink 目录。关闭相册保存后，所有下载文件均存入「文件」App。")
+            Text("车机 CPU 与 WiFi 带宽都有限：播放视频时会自动挂起下载任务（退出播放后按断点续传继续），并发数调小也能让播放和下载都更稳。相册保存位置：系统相册 ›「CarLink 车机互传」相簿；转存失败的 .ts 回退文件位于「文件」App › CarLink。")
         }
     }
 

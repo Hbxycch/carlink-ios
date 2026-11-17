@@ -218,6 +218,35 @@ struct UploadCompleteResponse: Decodable {
     let error: String?
 }
 
+// MARK: - /api/browse 车机文件浏览器
+
+struct BrowseEntry: Codable, Identifiable {
+    let name: String
+    let path: String
+    let dir: Bool
+    let size: Int64?
+    let modified: Double?
+    let ext: String?
+    /// 根节点（存储卷）标记
+    let root: Bool?
+    let freeBytes: Int64?
+    let totalBytes: Int64?
+
+    var id: String { path }
+    var date: Date { Date(timeIntervalSince1970: (modified ?? 0) / 1000.0) }
+}
+
+struct BrowseResponse: Codable {
+    let ok: Bool?
+    let path: String?
+    let parent: String?
+    let entries: [BrowseEntry]
+    let total: Int?
+    let hasMore: Bool?
+    let truncated: Bool?
+    let error: String?
+}
+
 // MARK: - 已保存设备
 
 struct SavedDevice: Codable, Identifiable, Equatable {

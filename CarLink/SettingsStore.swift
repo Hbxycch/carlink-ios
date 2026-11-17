@@ -41,6 +41,10 @@ final class SettingsStore: ObservableObject {
     @AppStorage("autoConnect") var autoConnect = true
     /// 视频播完自动连播下一段（按时间顺序）
     @AppStorage("autoPlayNext") var autoPlayNext = true
+    /// 播放时暂停下载任务（车机弱、带宽共享，边下边看会卡）
+    @AppStorage("pauseDownloadDuringPlayback") var pauseDownloadDuringPlayback = true
+    /// 同时下载任务数（1~4，默认 2）；车机弱时调小更稳
+    @AppStorage("maxConcurrentDownloads") var maxConcurrentDownloads = 2
     /// 外观：跟随系统（默认）/ 浅色 / 深色
     @AppStorage("appAppearance") var appearance: AppAppearance = .auto
 

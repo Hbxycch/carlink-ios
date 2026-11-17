@@ -50,6 +50,58 @@ struct VLCFileView: UIViewRepresentable {
 
 enum LocalVideoResolver {
 
+    /// 统一播放器要的是「一个能直接交给 VLC 的 URL」：
+    /// - 「文件」App 里的回退副本 → 沙盒内的真实文件；
+    /// - 相册资产 → 先试 AVURLAsset 的原始 URL（多数情况下可读），
+    ///   不可读（iCloud / 剪辑过的 AVComposition）再导出到缓存目录，按资产 id 复用。
+    static func playableURL(record: LocalRecord) async -> URL? {
+        switch record.kind {
+        case .fileTS:
+            let u = LibraryStore.tsDirectory.appending(path: record.localRef)
+            return FileManager.default.fileExists(atPath: u.path) ? u : nil
+        case .photoAlbum:
+            if let av = await asset(localId: record.localRef),
+               let u = (av as? AVURLAsset)?.url,
+               FileManager.default.isReadableFile(atPath: u.path) {
+                return u
+            }
+            return await exportResourceToCache(localId: record.localRef, name: record.name)
+        }
+    }
+
+    /// 把相册资产的原文件复制到缓存目录（VLC 只认文件路径），同一资产复用已导出的副本
+    static func exportResourceToCache(localId: String, name: String) async -> URL? {
+        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appending(path: "PlayCache")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let ext = (name as NSString).pathExtension.isEmpty ? "mp4" : (name as NSString).pathExtension
+        let safeId = localId.replacingOccurrences(of: "/", with: "_")
+        let out = dir.appending(path: "\(safeId).\(ext)")
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: out.path),
+           ((attrs[.size] as? Int64) ?? 0) > 0 {
+            return out
+        }
+        guard let a = PhotoSaver.fetchAsset(localId: localId),
+              let res = PHAssetResource.assetResources(for: a).first(where: {
+                  $0.type == .fullSizeVideo || $0.type == .video
+              }) else { return nil }
+        try? FileManager.default.removeItem(at: out)
+        return await withCheckedContinuation { (cont: CheckedContinuation<URL?, Never>) in
+            let opts = PHAssetResourceRequestOptions()
+            opts.isNetworkAccessAllowed = true
+            PHAssetResourceManager.default().writeData(for: res, toFile: out, options: opts) { err in
+                if err == nil,
+                   let attrs = try? FileManager.default.attributesOfItem(atPath: out.path),
+                   ((attrs[.size] as? Int64) ?? 0) > 0 {
+                    cont.resume(returning: out)
+                } else {
+                    try? FileManager.default.removeItem(at: out)
+                    cont.resume(returning: nil)
+                }
+            }
+        }
+    }
+
     /// 取相册视频的 AVAsset（兼容 AVComposition）
     static func asset(localId: String) async -> AVAsset? {
         await withCheckedContinuation { (cont: CheckedContinuation<AVAsset?, Never>) in

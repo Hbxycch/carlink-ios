@@ -15,11 +15,31 @@ struct TransferTabView: View {
     var body: some View {
         NavigationStack {
             List {
+                carFilesSection
                 uploadSection
                 downloadSection
             }
             .listStyle(.insetGrouped)
             .navigationTitle("传输")
+        }
+    }
+
+    // MARK: - 车机文件（浏览内部存储 / SD 卡）
+
+    private var carFilesSection: some View {
+        Section {
+            NavigationLink {
+                CarFilesBrowserView()
+            } label: {
+                Label("浏览车机文件", systemImage: "externaldrive")
+            }
+            .disabled(!conn.isConnected)
+        } header: {
+            Text("车机文件")
+        } footer: {
+            Text(conn.isConnected
+                 ? "浏览车机内部存储 / SD 卡 / U 盘里的任意文件（音乐、安装包、文档…）并下载到「文件」App › CarLink › 车机文件。"
+                 : "未连接车机，连接后即可浏览车机文件。")
         }
     }
 
@@ -123,7 +143,7 @@ struct TransferTabView: View {
                 }
             }
         } footer: {
-            Text("视频下载时车机端自动转存 .mp4（画质不变）；转存失败的坏文件自动保存原始 .ts 到「文件」App › CarLink。")
+            Text("视频下载后在本机转存 .mp4（画质不变）；转存失败的坏文件自动保存原始 .ts 到「文件」App › CarLink。播放视频时下载会自动挂起，退出播放后续跑。")
         }
     }
 }

@@ -15,12 +15,20 @@ enum DownloadState: String {
 enum DownloadTarget {
     case screenshot
     case dashcam(MediaCategory)
+    /// 车机文件浏览器里的任意文件：原样存「文件」App › CarLink › 车机文件
+    case carFile
 
     var category: MediaCategory {
         switch self {
         case .screenshot: return .snapshot   // 截图与抓拍在本地文件页同栏展示
         case .dashcam(let c): return c
+        case .carFile: return .snapshot
         }
+    }
+
+    var isArbitraryFile: Bool {
+        if case .carFile = self { return true }
+        return false
     }
 }
 
@@ -148,6 +156,55 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
     weak var settings: SettingsStore?
     private var netCancellable: AnyCancellable?
 
+    // MARK: 播放期间限流
+    //
+    // 车机 CPU 很弱、WiFi 带宽也有限：一边看录像一边跑两个下载，播放端会不停卡顿。
+    // 所以播放器打开时把正在跑的下载挂起（URLSession 支持 Range 断点续传，恢复时接着下），
+    // 退出播放再自动续跑；排队中的任务在播放期间不启动。
+
+    private var playbackDepth = 0
+    /// 被「播放限流」自动挂起的任务（区别于用户手动暂停，退出播放后只续跑这些）
+    private var autoPausedForPlayback: Set<String> = []
+
+    var playbackActive: Bool { playbackDepth > 0 }
+    var pausedForPlaybackCount: Int { autoPausedForPlayback.count }
+
+    private var effectiveMaxConcurrent: Int {
+        let v = UserDefaults.standard.integer(forKey: "maxConcurrentDownloads")
+        return v > 0 ? min(4, max(1, v)) : maxConcurrent
+    }
+
+    /// 播放开始：挂起下载（可嵌套调用，按次数配对）
+    func beginPlayback() {
+        playbackDepth += 1
+        guard playbackDepth == 1, settings?.pauseDownloadDuringPlayback != false else { return }
+        for it in items where it.state == .downloading {
+            autoPausedForPlayback.insert(it.id)
+            pause(it)
+        }
+    }
+
+    /// 播放结束：稍等片刻再续跑，避免「退出播放瞬间就抢带宽」造成界面卡顿
+    func endPlayback() {
+        playbackDepth = max(0, playbackDepth - 1)
+        guard playbackDepth == 0, !autoPausedForPlayback.isEmpty else { return }
+        let ids = autoPausedForPlayback
+        autoPausedForPlayback.removeAll()
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            guard self.playbackDepth == 0 else { return }
+            for id in ids {
+                if let it = self.items.first(where: { $0.id == id }), it.state == .paused {
+                    self.resume(it)
+                }
+            }
+            self.pump()
+        }
+    }
+
+    /// 设置变更后重新调度（并发数、播放限流开关）
+    func reschedule() { pump() }
+
     var activeCount: Int {
         items.filter { $0.state == .downloading || $0.state == .waiting }.count
     }
@@ -176,7 +233,7 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
         var added = 0
         for f in files {
             guard !inQueue.contains(f.path) else { continue }
-            if let lib = library, lib.isDownloaded(f) { continue }
+            if !target.isArbitraryFile, let lib = library, lib.isDownloaded(f) { continue }
             items.insert(DownloadItem(file: f, target: target), at: 0)
             badges[f.path] = DownloadBadge(state: .waiting, progress: 0)
             added += 1
@@ -267,9 +324,12 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
     private func pump() {
         // 仅 WiFi 下载：不在 WiFi 时保持排队
         if settings?.wifiOnlyDownload == true, settings?.isWiFi == false { return }
+        // 播放中：不启动新任务（正在跑的在 beginPlayback 里已挂起）
+        if playbackDepth > 0, settings?.pauseDownloadDuringPlayback != false { return }
+        let cap = effectiveMaxConcurrent
         let running = runningCount
-        guard running < maxConcurrent else { return }
-        let slots = maxConcurrent - running
+        guard running < cap else { return }
+        let slots = cap - running
         var started = 0
         for item in items where item.state == .waiting {
             start(item)
@@ -331,6 +391,14 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
             return
         }
         item.task = nil
+
+        // 「车机文件」浏览器下载的任意文件：原样存「文件」App，
+        // 不做转封装、不进相册、不进本地库（它可能是音乐/文档/安装包）
+        if item.target.isArbitraryFile {
+            saveArbitraryFile(item, tempURL: tempURL)
+            pump()
+            return
+        }
 
         var sourceURL = tempURL
         var remuxedURL: URL?
@@ -446,6 +514,32 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
             item.message = nil
         }
         pump()
+    }
+
+    /// 任意文件落盘：Documents/CarLink/车机文件/<原名>（重名自动加序号）
+    private func saveArbitraryFile(_ item: DownloadItem, tempURL: URL) {
+        let name = item.file.name.isEmpty ? "file" : item.file.name
+        do {
+            let dir = LibraryStore.carFilesDirectory
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let base = (name as NSString).deletingPathExtension
+            let ext = (name as NSString).pathExtension
+            var dest = dir.appending(path: name)
+            var i = 1
+            while FileManager.default.fileExists(atPath: dest.path) {
+                dest = dir.appending(path: ext.isEmpty ? "\(base)-\(i)" : "\(base)-\(i).\(ext)")
+                i += 1
+            }
+            try FileManager.default.moveItem(at: tempURL, to: dest)
+            item.state = .done
+            item.message = nil
+            item.savedAs = "已存「文件」App › CarLink › 车机文件"
+        } catch {
+            try? FileManager.default.removeItem(at: tempURL)
+            item.state = .failed
+            item.message = "保存失败：\(error.localizedDescription)"
+        }
+        badges[item.id] = nil
     }
 
     private func _onError(path: String, error: Error) {

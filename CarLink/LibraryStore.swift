@@ -43,6 +43,12 @@ final class LibraryStore: ObservableObject {
         return docs.appending(path: "CarLink")
     }
 
+    /// 「车机文件」浏览器下载的任意文件目录（「文件」App › CarLink › 车机文件）
+    static var carFilesDirectory: URL {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return docs.appending(path: "CarLink/车机文件")
+    }
+
     init() {
         load()
     }

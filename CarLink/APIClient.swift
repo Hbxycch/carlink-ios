@@ -117,10 +117,16 @@ final class APIClient {
     func screenshots() async throws -> [CarFile] {
         try await files(type: "screenshot")
     }
-
     /// 记录仪分类列表
     func dashcam(category: MediaCategory) async throws -> [CarFile] {
         try await files(type: "dashcam", category: category.apiValue)
+    }
+
+    /// 车机文件浏览（内部存储 / SD 卡 / U 盘）。path 传空 = 列出各存储卷
+    func browse(path: String, limit: Int = 300, offset: Int = 0) async throws -> BrowseResponse {
+        try await getJSON("/api/browse", query: ["path": path,
+                                                "limit": "\(limit)",
+                                                "offset": "\(offset)"])
     }
 
     // MARK: - 下载（流式播放 / 缩略图）

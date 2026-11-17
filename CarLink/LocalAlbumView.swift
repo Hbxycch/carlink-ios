@@ -3,6 +3,16 @@ import AVKit
 import Photos
 
 // MARK: - 本地文件段（设计图 3.6：与记录仪文件同级，同名三子分类）
+//
+// 视频点开不再用系统播放器，而是复用「记录仪文件」里的 PlayerView：
+// 倍速、三路互切、上一/下一条、全屏、上下滑切换全都一致。
+
+/// 播放请求（把整段视频条目一起传进统一播放器）
+struct LocalPlayRequest: Identifiable {
+    let id = UUID()
+    let items: [PlayItem]
+    let startID: String
+}
 
 struct LocalAlbumContent: View {
     @Binding var segment: FileSegment
@@ -13,6 +23,7 @@ struct LocalAlbumContent: View {
     @State private var filterDay: Date?
     @State private var showDatePicker = false
     @State private var viewer: LocalRecord?
+    @State private var playRequest: LocalPlayRequest?
     @State private var selectMode = false
     @State private var selection = Set<String>()
     @State private var anchorID: String?
@@ -111,6 +122,9 @@ struct LocalAlbumContent: View {
         }
         .sheet(item: $viewer) { r in
             LocalViewerSheet(record: r)
+        }
+        .fullScreenCover(item: $playRequest) { req in
+            PlayerView(items: req.items, startID: req.startID)
         }
         .confirmationDialog("删除 \(selection.count) 个本地副本？车机上的原片不受影响。",
                             isPresented: $confirmDelete, titleVisibility: .visible) {
@@ -396,8 +410,15 @@ struct LocalAlbumContent: View {
             if selection.contains(r.id) { selection.remove(r.id) }
             else { selection.insert(r.id) }
             anchorID = r.id
-        } else {
+        } else if isPhoto(r) {
             viewer = r
+        } else {
+            // 视频：进统一播放器（倍速 / 三路 / 上下滑切换都与在线播放一致）
+            let items = filtered.filter { !isPhoto($0) }.map { PlayItem(record: $0) }
+            if !items.isEmpty {
+                playRequest = LocalPlayRequest(items: items,
+                                               startID: PlayItem(record: r).id)
+            }
         }
     }
 
@@ -545,8 +566,29 @@ struct LocalViewerSheet: View {
 
     // 已下载视频：相册资产走 AVPlayerItem（兼容 AVComposition），
     // 「文件」App 的 .ts 回退文件走 VLC 内核——两者都不再出现「黑屏 + 静音图标」
+    @ViewBuilder
     private var tsViewer: some View {
-        LocalVideoView(fileURL: LibraryStore.tsDirectory.appending(path: record.localRef))
+        if isPhotoRecord {
+            fileImageView
+        } else {
+            LocalVideoView(fileURL: LibraryStore.tsDirectory.appending(path: record.localRef))
+        }
+    }
+
+    /// 「文件」App 里的图片（关闭相册保存时截图会落成文件）
+    @ViewBuilder
+    private var fileImageView: some View {
+        let url = LibraryStore.tsDirectory.appending(path: record.localRef)
+        if let img = UIImage(contentsOfFile: url.path) {
+            Image(uiImage: img)
+                .resizable()
+                .scaledToFit()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            Text("图片已丢失或无法读取")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
     }
 
     // 相册资产：图片直接显示，视频走 AVPlayerItem
