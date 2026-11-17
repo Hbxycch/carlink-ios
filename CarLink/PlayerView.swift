@@ -529,12 +529,51 @@ private final class VLCDelivery: NSObject, VLCMediaPlayerDelegate {
     func mediaPlayerReachedEnd(_ aNotification: Notification) { onEnd() }
 }
 
+// MARK: - VLC 采样器（在后台队列读取播放状态）
+
+/// libvlc 的 position / time 读取会与播放线程的输入锁同步；当网络流卡住时，
+/// 在主线程读这些属性会把整个 UI 冻住（画面停在最后一帧，按钮/返回全部失效）。
+/// 因此所有属性读取都放到独立串行队列，主线程只接收采样结果。
+private final class VLCProbe {
+    private let player: VLCMediaPlayer
+    private let queue = DispatchQueue(label: "carlink.vlc.probe", qos: .utility)
+    private var busy = false
+
+    init(player: VLCMediaPlayer) {
+        self.player = player
+    }
+
+    struct Sample {
+        let position: Double
+        let timeMs: Int
+        let remainingMs: Int
+        let playing: Bool
+    }
+
+    func sample(_ completion: @escaping (Sample) -> Void) {
+        if busy { return }
+        busy = true
+        queue.async { [weak self] in
+            guard let self = self else { return }
+            let s = Sample(position: Double(self.player.position),
+                           timeMs: Int(self.player.time.intValue),
+                           remainingMs: Int(self.player.remainingTime?.intValue ?? 0),
+                           playing: self.player.isPlaying)
+            DispatchQueue.main.async {
+                self.busy = false
+                completion(s)
+            }
+        }
+    }
+}
+
 // MARK: - 播放模型
 
 @MainActor
 final class PlayerModel: NSObject, ObservableObject {
     let mediaPlayer = VLCMediaPlayer()
     private let delivery = VLCDelivery()
+    private lazy var probe = VLCProbe(player: mediaPlayer)
 
     @Published var playing = false
     @Published var buffering = false
@@ -562,6 +601,7 @@ final class PlayerModel: NSObject, ObservableObject {
 
     func play(url: URL, resumePosition: Double = 0) {
         endFired = false
+        buffering = true
         pendingResume = resumePosition > 0.01 ? min(resumePosition, 0.98) : nil
         currentPath = url.query?.components(separatedBy: "&")
             .first { $0.hasPrefix("path=") }?
@@ -582,10 +622,11 @@ final class PlayerModel: NSObject, ObservableObject {
     }
 
     func togglePlay() {
-        if mediaPlayer.isPlaying {
+        if playing {
             mediaPlayer.pause()
             playing = false
         } else {
+            buffering = true
             mediaPlayer.play()
             playing = true
         }
@@ -602,6 +643,7 @@ final class PlayerModel: NSObject, ObservableObject {
     func seek(to pos: Double) {
         let clamped = min(max(pos, 0), 0.999)
         mediaPlayer.position = Float(clamped)
+        position = clamped
     }
 
     func setRate(_ r: Float) {
@@ -616,37 +658,44 @@ final class PlayerModel: NSObject, ObservableObject {
         }
     }
 
+    /// 主线程只做轻量展示；真正的 VLC 读取在后台队列
     private func tick() {
+        probe.sample { [weak self] s in
+            Task { @MainActor in self?.apply(s) }
+        }
+    }
+
+    private func apply(_ s: VLCProbe.Sample) {
         // 三路互切：新流开播后恢复上次进度
-        if let p = pendingResume, mediaPlayer.isPlaying, mediaPlayer.time.intValue > 0 {
+        if let p = pendingResume, s.playing, s.timeMs > 0 {
             mediaPlayer.position = Float(p)
             pendingResume = nil
         }
-        position = Double(mediaPlayer.position)
-        let t = Int(mediaPlayer.time.intValue)
-        let rem = Int(mediaPlayer.remainingTime?.intValue ?? 0)
-        timeText = Fmt.mseconds(max(0, t))
-        let dur = t - rem   // remainingTime 为负值
+        position = s.position
+        timeText = Fmt.mseconds(max(0, s.timeMs))
+        let dur = s.timeMs - s.remainingMs   // remainingTime 为负值
         if dur > 0 {
             durationText = Fmt.mseconds(dur)
             if let p = currentPath {
                 DurationCache.set(Double(dur) / 1000.0, for: p)
             }
         }
-        playing = mediaPlayer.isPlaying
+        if s.position > 0.0005 || s.timeMs > 0 {
+            buffering = false
+        }
+        playing = s.playing
     }
 
     private func syncState() {
-        playing = mediaPlayer.isPlaying
-        let st = mediaPlayer.state
-        buffering = (st == .buffering) || (st == .opening)
-        if st == .ended { fireEnd() }
+        // 不再读 mediaPlayer.state（可能与输入线程同步阻塞）；由采样结果驱动 UI
+        if !playing && position > 0.995 { fireEnd() }
     }
 
     private func fireEnd() {
         guard !endFired else { return }
         endFired = true
         playing = false
+        buffering = false
         endedToken += 1
     }
 }
