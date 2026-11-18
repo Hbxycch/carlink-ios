@@ -134,6 +134,8 @@ struct CarInfo: Codable {
     let wifi: WifiInfo?
     let switches: Switches?
     let counts: Counts?
+    /// 车机是否支持快照流（v1.1.28+）
+    let cameraFrame: Bool?
 
     /// 容错解码：老版本车机缺字段（如 port / version）也允许连上，
     /// 避免浏览器能打开、App 却因 JSON 解析失败连不上的情况
@@ -150,6 +152,7 @@ struct CarInfo: Codable {
         wifi = try? c.decodeIfPresent(WifiInfo.self, forKey: .wifi)
         switches = try? c.decodeIfPresent(Switches.self, forKey: .switches)
         counts = try? c.decodeIfPresent(Counts.self, forKey: .counts)
+        cameraFrame = try? c.decodeIfPresent(Bool.self, forKey: .cameraFrame)
     }
 
     /// 机型展示："ROCO K706"（无 model 时退回 brand）
@@ -317,4 +320,35 @@ struct StreamFfmpeg: Codable {
     let progress: Int?
     let installed: Bool?
     let error: String?
+}
+
+// MARK: - /api/camera/status 车机快照流
+
+struct CameraFrameStatus: Codable, Identifiable {
+    let camera: String
+    let hasFrame: Bool?
+    /// live = ffmpeg 关键帧管线；snapshot = 一次性抽帧 / DVR 缩略图兜底
+    let source: String?
+    let ageMs: Int?
+    let bytes: Int?
+    let width: Int?
+    let height: Int?
+    /// starting / running / idle / no-ffmpeg / no-file / error / stopped
+    let worker: String?
+    let ffmpeg: Bool?
+    let error: String?
+
+    var id: String { camera }
+
+    var sourceTitle: String {
+        switch source ?? "" {
+        case "live": return "实时帧"
+        case "snapshot": return "快照"
+        default: return "无画面"
+        }
+    }
+}
+
+struct CameraFramesResponse: Codable {
+    let frames: [CameraFrameStatus]
 }

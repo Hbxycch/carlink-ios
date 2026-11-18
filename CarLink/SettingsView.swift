@@ -14,6 +14,7 @@ struct SettingsView: View {
         NavigationStack {
             List {
                 connectionSection
+                monitorSection
                 downloadSection
                 playbackSection
                 appearanceSection
@@ -89,6 +90,47 @@ struct SettingsView: View {
             Text("连接")
         } footer: {
             Text("开启后，每次进入 App 或回到前台时自动连接最近一次使用的车机（约 20 秒内不重复尝试）。")
+        }
+    }
+
+    // MARK: 车机监控（画面来源二选一）
+
+    private var monitorSection: some View {
+        Section {
+            NavigationLink {
+                MonitorView()
+            } label: {
+                Label("打开车机监控", systemImage: "video.fill")
+            }
+            .disabled(!conn.isConnected)
+            .foregroundStyle(conn.isConnected ? .primary : .secondary)
+
+            Picker("画面来源", selection: $settings.monitorSource) {
+                ForEach(MonitorSource.allCases) { s in
+                    Text(s.title).tag(s)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            if settings.monitorSource != .snapshot {
+                TextField("easyNVR 服务地址（http://ip:端口）", text: $settings.monitorNvrBase)
+                    .keyboardType(.URL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                TextField("HLS 地址模板", text: $settings.monitorHlsTemplate)
+                    .keyboardType(.URL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+            }
+
+            Picker("快照刷新", selection: $settings.monitorSnapshotFps) {
+                Text("1 帧/秒").tag(1)
+                Text("2 帧/秒").tag(2)
+            }
+        } header: {
+            Text("车机监控")
+        } footer: {
+            Text("\(settings.monitorSource.detail)。HLS 走 easyNVR（连续视频、画质好，但手机必须能访问它）；快照流由车机每秒解一帧 640×360 JPEG，只要连上车机就能看，需车机端 v1.1.28+。模板占位符：{base} 服务地址、{key} 推流流名、{host} 车机推流主机。")
         }
     }
 

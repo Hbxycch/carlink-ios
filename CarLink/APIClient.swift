@@ -244,6 +244,35 @@ final class APIClient {
                                       saved: nil, path: nil, name: nil, error: nil)
     }
 
+    // MARK: - 车机快照流（/api/camera/frame）
+
+    /// 单帧 JPEG 地址（带时间戳绕过缓存）
+    func cameraFrameURL(cam: String) -> URL {
+        url("/api/camera/frame", query: ["cam": cam,
+                                         "t": "\(Int(Date().timeIntervalSince1970 * 1000))"])
+    }
+
+    /// 拉一帧 JPEG。用 6s 短超时：车机首帧可能要准备管线，但不能拖住整个界面。
+    func fetchCameraFrame(cam: String) async throws -> Data {
+        var req = URLRequest(url: cameraFrameURL(cam: cam))
+        req.timeoutInterval = 6
+        req.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        let (data, resp) = try await session.data(for: req)
+        if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let msg = obj["error"] as? String, !msg.isEmpty {
+                throw APIError(msg)
+            }
+            throw APIError("HTTP \(http.statusCode)")
+        }
+        return data
+    }
+
+    func cameraStatus() async throws -> [CameraFrameStatus] {
+        let r: CameraFramesResponse = try await getJSON("/api/camera/status")
+        return r.frames
+    }
+
     // MARK: - 摄像头推流
 
     func streamStatus() async throws -> StreamStatusResponse {

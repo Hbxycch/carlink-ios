@@ -300,6 +300,17 @@ struct CarHomeView: View {
     // 快捷入口
     private var quickLinks: some View {
         Section("快捷入口") {
+            NavigationLink {
+                MonitorView()
+            } label: {
+                HStack(spacing: 8) {
+                    Label("车机监控", systemImage: "video.fill")
+                    Spacer(minLength: 0)
+                    Text(conn.isOnline ? "三路画面" : "离线")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(conn.isOnline ? CL.ink2 : CL.red)
+                }
+            }
             Button {
                 nav.filesJump = FileSegmentJump(segment: .remote, category: .loop)
                 nav.tab = .files

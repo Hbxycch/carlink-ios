@@ -28,6 +28,41 @@ enum AppAppearance: String, CaseIterable, Identifiable {
     }
 }
 
+// MARK: - 监控画面来源
+
+enum MonitorSource: String, CaseIterable, Identifiable {
+    /// 优先 easyNVR HLS，起播失败逐路降级到车机快照流
+    case auto
+    case hls
+    case snapshot
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .auto: return "自动"
+        case .hls: return "easyNVR HLS"
+        case .snapshot: return "车机快照流"
+        }
+    }
+
+    var shortTitle: String {
+        switch self {
+        case .auto: return "自动"
+        case .hls: return "HLS"
+        case .snapshot: return "快照"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .auto: return "优先 HLS，连不上时该路自动改用快照流"
+        case .hls: return "连续视频、画质好，需要手机能访问 easyNVR"
+        case .snapshot: return "车机每秒解码一帧，只要连上车机就能看"
+        }
+    }
+}
+
 /// 全局设置（@AppStorage 持久化）
 @MainActor
 final class SettingsStore: ObservableObject {
@@ -47,6 +82,16 @@ final class SettingsStore: ObservableObject {
     @AppStorage("maxConcurrentDownloads") var maxConcurrentDownloads = 2
     /// 外观：跟随系统（默认）/ 浅色 / 深色
     @AppStorage("appAppearance") var appearance: AppAppearance = .auto
+
+    // MARK: 车机监控
+    /// 画面来源：自动 / easyNVR HLS / 车机快照流
+    @AppStorage("monitorSource") var monitorSource: MonitorSource = .auto
+    /// easyNVR 服务地址，如 http://192.168.10.100:10800（留空则自动模式只用快照流）
+    @AppStorage("monitorNvrBase") var monitorNvrBase = ""
+    /// HLS 地址模板：{base} = 上面的服务地址，{key} = 推流流名，{host} = 车机推流的 NVR 主机
+    @AppStorage("monitorHlsTemplate") var monitorHlsTemplate = "{base}/hls/{key}/{key}_live.m3u8"
+    /// 快照流刷新频率（车机端上限约 1fps）
+    @AppStorage("monitorSnapshotFps") var monitorSnapshotFps = 1
 
     /// 网络类型监测（供下载调度订阅）
     @Published var isWiFi = true
