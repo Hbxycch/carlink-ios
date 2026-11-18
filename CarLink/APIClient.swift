@@ -11,6 +11,8 @@ final class APIClient {
     let host: String
     let port: Int
     private let session: URLSession
+    /// 心跳专用会话：4s 超时，掉线判定不被大文件传输的 15s/120s 超时拖慢
+    private let probeSession: URLSession
 
     init(host: String, port: Int) {
         self.host = host
@@ -19,6 +21,13 @@ final class APIClient {
         cfg.timeoutIntervalForRequest = 15
         cfg.timeoutIntervalForResource = 3600
         session = URLSession(configuration: cfg)
+
+        let pcfg = URLSessionConfiguration.ephemeral
+        pcfg.timeoutIntervalForRequest = 4
+        pcfg.timeoutIntervalForResource = 6
+        pcfg.waitsForConnectivity = false
+        pcfg.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        probeSession = URLSession(configuration: pcfg)
     }
 
     var baseURLText: String { "http://\(host):\(port)" }
@@ -87,6 +96,20 @@ final class APIClient {
 
     func status() async throws -> StatusResponse {
         try await getJSON("/api/status")
+    }
+
+    /// 心跳探测：拿实时状态 + 往返耗时（ms）。用 4s 短超时，掉线能秒级发现。
+    func ping() async throws -> (StatusResponse, Int) {
+        let t0 = Date()
+        let (data, resp) = try await probeSession.data(from: url("/api/status"))
+        try Self.checkHTTP(resp, body: data)
+        let s: StatusResponse
+        do {
+            s = try JSONDecoder().decode(StatusResponse.self, from: data)
+        } catch {
+            throw APIError("解析 /api/status 响应失败：\(Self.preview(data))")
+        }
+        return (s, max(1, Int(Date().timeIntervalSince(t0) * 1000)))
     }
 
     /// 存储卷（内部存储 / SD 卡 / USB 的总量与剩余）

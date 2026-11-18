@@ -59,9 +59,12 @@ struct CarLinkApp: App {
                     await updateChecker.check(silent: true)
                 }
                 .onChange(of: scenePhase) { phase in
-                    // 回到前台时若已断开，自动重连上次车机（带冷却）
-                    if phase == .active, settings.autoConnect {
-                        conn.autoConnectIfPossible()
+                    // 回到前台：先立刻探测一次真实链路（不等 2s 轮询），再按需自动重连
+                    if phase == .active {
+                        if settings.autoConnect {
+                            conn.autoConnectIfPossible()
+                        }
+                        Task { await conn.probeNow() }
                     }
                 }
         }

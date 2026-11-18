@@ -33,13 +33,13 @@ struct TransferTabView: View {
             } label: {
                 Label("浏览车机文件", systemImage: "externaldrive")
             }
-            .disabled(!conn.isConnected)
+            .disabled(!conn.isLinkUsable)
         } header: {
             Text("车机文件")
         } footer: {
-            Text(conn.isConnected
+            Text(conn.isLinkUsable
                  ? "浏览车机内部存储 / SD 卡 / U 盘里的任意文件（音乐、安装包、文档…）并下载到「文件」App › CarLink › 车机文件。"
-                 : "未连接车机，连接后即可浏览车机文件。")
+                 : (conn.hasSession ? "车机连接已断开，正在自动重连…" : "未连接车机，连接后即可浏览车机文件。"))
         }
     }
 
@@ -47,8 +47,9 @@ struct TransferTabView: View {
 
     private var uploadSection: some View {
         Section {
-            if !conn.isConnected {
-                Label("未连接车机，连接后即可上传", systemImage: "wifi.slash")
+            if !conn.isLinkUsable {
+                Label(conn.hasSession ? "车机连接已断开，正在自动重连…" : "未连接车机，连接后即可上传",
+                      systemImage: "wifi.slash")
                     .foregroundStyle(.secondary)
                     .font(.subheadline)
             }
@@ -57,7 +58,7 @@ struct TransferTabView: View {
                          photoLibrary: .shared()) {
                 Label("从相册选择上传", systemImage: "photo.stack")
             }
-            .disabled(!conn.isConnected)
+            .disabled(!conn.isLinkUsable)
             .onChange(of: photoSelection) { items in
                 for item in items {
                     guard let id = item.itemIdentifier else { continue }
@@ -71,7 +72,7 @@ struct TransferTabView: View {
             } label: {
                 Label("从「文件」App 选择上传", systemImage: "folder")
             }
-            .disabled(!conn.isConnected)
+            .disabled(!conn.isLinkUsable)
             .fileImporter(isPresented: $showFileImporter,
                           allowedContentTypes: [.item],
                           allowsMultipleSelection: false) { result in
