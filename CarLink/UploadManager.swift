@@ -145,7 +145,19 @@ final class UploadManager: ObservableObject {
             if offset > 0 { try handle.seek(toOffset: UInt64(offset)) }
             while offset < size {
                 guard let chunk = try handle.read(upToCount: chunkSize), !chunk.isEmpty else { break }
-                let newOffset = try await api.uploadChunk(id: uploadId, offset: offset, body: chunk)
+                // 弱网下单块偶发失败很常见，重试 3 次再放弃（分片是幂等的，服务端按 offset 随机写）
+                var attempt = 0
+                var newOffset = offset
+                while true {
+                    do {
+                        newOffset = try await api.uploadChunk(id: uploadId, offset: offset, body: chunk)
+                        break
+                    } catch {
+                        attempt += 1
+                        if attempt >= 3 { throw error }
+                        try? await Task.sleep(nanoseconds: 600_000_000)
+                    }
+                }
                 offset = newOffset
                 item.sent = offset
                 item.updateSpeed(sent: offset)

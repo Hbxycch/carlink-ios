@@ -65,9 +65,16 @@ final class APIClient {
         return (code, Self.preview(data))
     }
 
-    static func checkHTTP(_ resp: URLResponse) throws {
+    /// 校验状态码。4xx 时服务端 body 里带中文原因（如"无法创建接收目录"），
+    /// 直接透传比只显示 "HTTP 400" 有用得多。
+    static func checkHTTP(_ resp: URLResponse, body: Data? = nil) throws {
         guard let http = resp as? HTTPURLResponse else { return }
         guard (200..<300).contains(http.statusCode) else {
+            if let body = body,
+               let obj = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+               let msg = obj["error"] as? String, !msg.isEmpty {
+                throw APIError(msg)
+            }
             throw APIError("HTTP \(http.statusCode)")
         }
     }
@@ -183,7 +190,7 @@ final class APIClient {
         if let d = dir, !d.isEmpty { body["dir"] = d }
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, resp) = try await session.data(for: req)
-        try Self.checkHTTP(resp)
+        try Self.checkHTTP(resp, body: data)
         return try JSONDecoder().decode(UploadInitResponse.self, from: data)
     }
 
@@ -194,7 +201,7 @@ final class APIClient {
         req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
         req.timeoutInterval = 120
         let (data, resp) = try await session.data(for: req)
-        try Self.checkHTTP(resp)
+        try Self.checkHTTP(resp, body: data)
         let r = try JSONDecoder().decode(UploadChunkResponse.self, from: data)
         guard r.ok, let newOffset = r.offset else {
             throw APIError(r.error ?? "上传分片失败")
@@ -206,7 +213,7 @@ final class APIClient {
         var req = URLRequest(url: url("/api/upload/\(id)/complete"))
         req.httpMethod = "POST"
         let (data, resp) = try await session.data(for: req)
-        try Self.checkHTTP(resp)
+        try Self.checkHTTP(resp, body: data)
         let r = try? JSONDecoder().decode(UploadCompleteResponse.self, from: data)
         if let r = r { return r }
         // 服务端返回非 JSON 时兜底
