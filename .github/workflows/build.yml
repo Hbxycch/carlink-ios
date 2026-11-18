@@ -11,7 +11,10 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-latest
+    # macos-latest 现指向 arm64 (M1) 池，容量紧张时排队 15 分钟拿不到 runner 会被直接取消；
+    # 固定到 Intel 池（4 核 14GB），避免无编译结果的"假失败"。
+    runs-on: macos-15-intel
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
