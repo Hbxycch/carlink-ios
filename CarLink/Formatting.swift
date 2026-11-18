@@ -12,6 +12,8 @@ enum Fmt {
         return "\(v) B"
     }
 
+    static func bytes(_ v: Int) -> String { bytes(Int64(v)) }
+
     static func rate(_ v: Double) -> String {
         let f = Double(v)
         if f >= 1_048_576 { return String(format: "%.1f MB/s", f / 1_048_576) }
