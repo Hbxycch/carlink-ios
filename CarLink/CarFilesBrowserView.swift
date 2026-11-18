@@ -11,7 +11,7 @@ struct CarFilesBrowserView: View {
     @EnvironmentObject var uploads: UploadManager
 
     @State private var path: String = ""
-    @State private var showUploadPicker = false""
+    @State private var showUploadPicker = false
     @State private var entries: [BrowseEntry] = []
     @State private var parent: String?
     @State private var total = 0
