@@ -53,6 +53,14 @@ struct SettingsView: View {
                 }
             }
 
+            NavigationLink {
+                DeviceStatusView()
+            } label: {
+                Label("车机状态", systemImage: "gauge.with.dots.needle.bottom.50percent")
+            }
+            .disabled(!conn.isConnected)
+            .foregroundStyle(conn.isConnected ? .primary : .secondary)
+
             if !conn.savedDevices.isEmpty {
                 ForEach(conn.savedDevices) { d in
                     HStack {

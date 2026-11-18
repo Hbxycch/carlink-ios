@@ -150,6 +150,29 @@ final class APIClient {
         return data
     }
 
+    // MARK: - 车机状态（字段动态，用字典承载避免脆 Codable）
+
+    func deviceInfoDict() async throws -> [String: Any] {
+        try await getJSONDict("/api/device/info")
+    }
+
+    func deviceAppsDict() async throws -> [String: Any] {
+        try await getJSONDict("/api/device/apps")
+    }
+
+    func devicePeripheralsDict() async throws -> [String: Any] {
+        try await getJSONDict("/api/device/peripherals")
+    }
+
+    private func getJSONDict(_ path: String) async throws -> [String: Any] {
+        let (data, resp) = try await session.data(from: url(path))
+        try Self.checkHTTP(resp)
+        guard let d = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw APIError("响应格式错误")
+        }
+        return d
+    }
+
     // MARK: - 分片上传
 
     func uploadInit(name: String, size: Int64, dir: String? = nil) async throws -> UploadInitResponse {
