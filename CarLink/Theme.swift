@@ -126,35 +126,56 @@ struct LocalCheckDot: View {
     }
 }
 
-// MARK: - 封面下载进度角标（缩略图上的环形进度 + 百分比）
+// MARK: - 封面下载进度角标（缩略图上的环形进度 + 百分比 + 速率）
 
 struct DownloadProgressBadge: View {
     let progress: Double
     var paused: Bool = false
+    var speedBps: Double = 0
 
     private var percent: Int { max(0, min(100, Int((progress * 100).rounded()))) }
 
+    /// 紧凑速率文本（角标内用）：3.2M/s / 456K/s
+    private var speedText: String? {
+        guard speedBps > 0 else { return nil }
+        if speedBps >= 1_048_576 { return String(format: "%.1fM/s", speedBps / 1_048_576) }
+        if speedBps >= 1024 { return String(format: "%.0fK/s", speedBps / 1024) }
+        return nil   // 低于 1KB/s 太抖动，不显示
+    }
+
     var body: some View {
-        ZStack {
-            Circle()
-                .fill(Color.black.opacity(0.55))
-            Circle()
-                .trim(from: 0, to: max(0.02, min(1, progress)))
-                .stroke(CL.blue, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-            if paused {
-                Image(systemName: "pause.fill")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(.white)
-            } else {
-                Text("\(percent)%")
+        VStack(spacing: 2) {
+            ZStack {
+                Circle()
+                    .fill(Color.black.opacity(0.55))
+                Circle()
+                    .trim(from: 0, to: max(0.02, min(1, progress)))
+                    .stroke(CL.blue, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                if paused {
+                    Image(systemName: "pause.fill")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.white)
+                } else {
+                    Text("\(percent)%")
+                        .font(.system(size: 8, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .monospacedDigit()
+                }
+            }
+            .frame(width: 30, height: 30)
+            .overlay(Circle().stroke(Color.white.opacity(0.85), lineWidth: 1))
+
+            if let st = speedText, !paused {
+                Text(st)
                     .font(.system(size: 8, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
                     .monospacedDigit()
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(Color.black.opacity(0.55)))
             }
         }
-        .frame(width: 30, height: 30)
-        .overlay(Circle().stroke(Color.white.opacity(0.85), lineWidth: 1))
     }
 }
 
@@ -162,6 +183,13 @@ struct DownloadProgressBadge: View {
 struct DownloadingChip: View {
     let progress: Double
     var paused: Bool = false
+    var speedBps: Double = 0
+
+    private var speedText: String? {
+        guard speedBps > 1024, !paused else { return nil }
+        if speedBps >= 1_048_576 { return String(format: "%.1fM/s", speedBps / 1_048_576) }
+        return String(format: "%.0fK/s", speedBps / 1024)
+    }
 
     var body: some View {
         HStack(spacing: 2) {
@@ -170,6 +198,12 @@ struct DownloadingChip: View {
             Text(paused ? "已暂停" : "\(Int((progress * 100).rounded()))%")
                 .font(.system(size: 8, weight: .bold, design: .rounded))
                 .monospacedDigit()
+            if let st = speedText {
+                Text(st)
+                    .font(.system(size: 8, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(Color.white.opacity(0.85))
+            }
         }
         .foregroundStyle(.white)
         .padding(.horizontal, 4)

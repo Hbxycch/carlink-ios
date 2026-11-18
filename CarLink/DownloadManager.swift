@@ -42,9 +42,15 @@ final class DownloadItem: Identifiable, ObservableObject {
     @Published var total: Int64 = 0
     @Published var message: String?
     @Published var savedAs: String?
+    /// 平滑后的下载速率（字节/秒），暂停/完成时清零
+    @Published var speedBps: Double = 0
 
     var task: URLSessionDownloadTask?
     var resumeData: Data?
+
+    // 速率计算（EMA 平滑，最多每 0.5s 发布一次）
+    private var lastSpeedAt: Date?
+    private var lastSpeedBytes: Int64 = 0
 
     init(file: CarFile, target: DownloadTarget) {
         self.file = file
@@ -58,6 +64,30 @@ final class DownloadItem: Identifiable, ObservableObject {
     }
 
     var isActive: Bool { state == .downloading || state == .waiting }
+
+    /// 收到进度回调时更新速率；elapsed ≥ 0.5s 才刷新发布，避免高频重绘
+    func updateSpeed(received: Int64) {
+        let now = Date()
+        guard let last = lastSpeedAt else {
+            lastSpeedAt = now
+            lastSpeedBytes = received
+            return
+        }
+        let dt = now.timeIntervalSince(last)
+        guard dt >= 0.5 else { return }
+        let inst = Double(received - lastSpeedBytes) / dt
+        // EMA：新旧样本 7:3，抑制瞬时抖动
+        speedBps = speedBps <= 0 ? max(0, inst) : max(0, speedBps * 0.3 + inst * 0.7)
+        lastSpeedAt = now
+        lastSpeedBytes = received
+    }
+
+    /// 速率归零（暂停/取消/完成时调用）
+    func resetSpeed() {
+        speedBps = 0
+        lastSpeedAt = nil
+        lastSpeedBytes = 0
+    }
 }
 
 // MARK: - URLSession 下载引擎（delegate 模式，支持暂停恢复）
@@ -135,6 +165,8 @@ final class DownloadEngine: NSObject, URLSessionDownloadDelegate {
 struct DownloadBadge: Equatable {
     var state: DownloadState
     var progress: Double
+    /// 平滑速率（字节/秒），仅封面角标展示用；rounded KB 变化才触发刷新
+    var speedBps: Double = 0
 
     var paused: Bool { state == .paused || state == .failed }
     var active: Bool { state == .downloading || state == .waiting || state == .paused }
@@ -256,6 +288,7 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
     func pause(_ item: DownloadItem) {
         guard item.state == .downloading || item.state == .waiting else { return }
         item.state = .paused
+        item.resetSpeed()
         badges[item.id] = DownloadBadge(state: .paused, progress: item.progress)
         if let t = item.task, t.state == .running {
             t.cancel(byProducingResumeData: { [weak item] data in
@@ -279,6 +312,7 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
         } else {
             item.received = 0
             item.total = 0
+            item.resetSpeed()
             item.state = .waiting
             badges[item.id] = DownloadBadge(state: .waiting, progress: 0)
             pump()
@@ -289,6 +323,7 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
         item.task?.cancel()
         item.task = nil
         item.resumeData = nil
+        item.resetSpeed()
         items.removeAll { $0.id == item.id }
         badges[item.id] = nil
     }
@@ -298,6 +333,7 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
         item.received = 0
         item.total = 0
         item.message = nil
+        item.resetSpeed()
         item.state = .waiting
         badges[item.id] = DownloadBadge(state: .waiting, progress: 0)
         pump()
@@ -377,11 +413,15 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
         guard let item = items.first(where: { $0.id == path }), item.state == .downloading else { return }
         item.received = received
         if total > 0 { item.total = total }
-        // 封面角标：只在百分比整数变化时刷新，避免高频重绘整个列表
+        item.updateSpeed(received: received)
+        // 封面角标：百分比整数变化或速率（按 KB 取整）变化时刷新
         let denom = total > 0 ? Double(total) : Double(max(item.file.size, 1))
         let pct = min(100, Int(Double(received) / denom * 100))
-        if Int((badges[path]?.progress ?? -1) * 100) != pct {
-            badges[path] = DownloadBadge(state: .downloading, progress: Double(pct) / 100.0)
+        let kb = Int(item.speedBps / 1024)
+        let old = badges[path]
+        if Int((old?.progress ?? -1) * 100) != pct || Int((old?.speedBps ?? -1) / 1024) != kb {
+            badges[path] = DownloadBadge(state: .downloading, progress: Double(pct) / 100.0,
+                                         speedBps: item.speedBps)
         }
     }
 
@@ -391,6 +431,7 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
             return
         }
         item.task = nil
+        item.resetSpeed()
 
         // 「车机文件」浏览器下载的任意文件：原样存「文件」App，
         // 不做转封装、不进相册、不进本地库（它可能是音乐/文档/安装包）
@@ -545,7 +586,8 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
     private func _onError(path: String, error: Error) {
         guard let item = items.first(where: { $0.id == path }) else { return }
         item.task = nil
-        if item.state == .paused { return }   // 主动暂停产生的事件，忽略
+        if item.state == .paused { return }
+        item.resetSpeed()   // 主动暂停产生的事件，忽略
         let ns = error as NSError
         if ns.code == NSURLErrorCancelled { return }
         item.state = .failed

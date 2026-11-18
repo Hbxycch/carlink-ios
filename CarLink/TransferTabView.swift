@@ -180,7 +180,8 @@ struct UploadRow: View {
             }
             if item.state == .preparing || item.state == .running {
                 ProgressView(value: item.progress)
-                Text("\(Fmt.bytes(item.sent)) / \(item.size > 0 ? Fmt.bytes(item.size) : "…")")
+                Text("\(Fmt.bytes(item.sent)) / \(item.size > 0 ? Fmt.bytes(item.size) : "…")"
+                     + (item.state == .running && item.speedBps > 0 ? " · \(Fmt.rate(item.speedBps))" : ""))
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
@@ -212,7 +213,9 @@ struct UploadRow: View {
     private var statusText: String {
         switch item.state {
         case .preparing: return "准备中…"
-        case .running: return "上传中 \(Int(item.progress * 100))%"
+        case .running: return item.speedBps > 0
+            ? "上传中 \(Int(item.progress * 100))% · \(Fmt.rate(item.speedBps))"
+            : "上传中 \(Int(item.progress * 100))%"
         case .done: return "已保存到车机 \(item.savedPath.map { "· \($0)" } ?? "")"
         case .failed: return item.message ?? "上传失败"
         }
@@ -245,7 +248,8 @@ struct DownloadRow: View {
             }
             if item.state == .downloading || (item.state == .paused && item.received > 0) {
                 ProgressView(value: item.progress)
-                Text("\(Fmt.bytes(item.received)) / \(item.total > 0 ? Fmt.bytes(item.total) : Fmt.bytes(item.file.size))")
+                Text("\(Fmt.bytes(item.received)) / \(item.total > 0 ? Fmt.bytes(item.total) : Fmt.bytes(item.file.size))"
+                     + (item.state == .downloading && item.speedBps > 0 ? " · \(Fmt.rate(item.speedBps))" : ""))
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
@@ -278,7 +282,9 @@ struct DownloadRow: View {
     private var statusText: String {
         switch item.state {
         case .waiting: return "排队中"
-        case .downloading: return "下载中 \(Int(item.progress * 100))%"
+        case .downloading: return item.speedBps > 0
+            ? "下载中 \(Int(item.progress * 100))% · \(Fmt.rate(item.speedBps))"
+            : "下载中 \(Int(item.progress * 100))%"
         case .paused: return "已暂停 \(Int(item.progress * 100))%"
         case .failed: return item.message ?? "下载失败"
         case .done: return item.savedAs ?? "已完成"

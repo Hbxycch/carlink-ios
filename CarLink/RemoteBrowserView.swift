@@ -466,7 +466,7 @@ struct RemoteAlbumContent: View {
                     // 下载中：封面上直接给进度（环形 + 百分比），不用翻到「下载中」才看得到
                     if let b = badge, b.active {
                         VStack(spacing: 2) {
-                            DownloadProgressBadge(progress: b.progress, paused: b.paused)
+                            DownloadProgressBadge(progress: b.progress, paused: b.paused, speedBps: b.speedBps)
                             if b.state == .waiting {
                                 Text("排队")
                                     .font(.system(size: 8, weight: .bold))
@@ -539,7 +539,7 @@ struct RemoteAlbumContent: View {
                     }
                 }
                 if let b = badge, b.active {
-                    DownloadProgressBadge(progress: b.progress, paused: b.paused)
+                    DownloadProgressBadge(progress: b.progress, paused: b.paused, speedBps: b.speedBps)
                 } else {
                     Image(systemName: f.isVideo ? "play.fill" : "photo.fill")
                         .font(.system(size: 9))
@@ -569,7 +569,7 @@ struct RemoteAlbumContent: View {
                     .font(.system(size: 17))
                     .foregroundStyle(selection.contains(f.id) ? CL.blue : Color.secondary)
             } else if let b = badge, b.active {
-                DownloadingChip(progress: b.progress, paused: b.paused)
+                DownloadingChip(progress: b.progress, paused: b.paused, speedBps: b.speedBps)
             } else if downloaded {
                 LocalTag(compact: true)
             } else {

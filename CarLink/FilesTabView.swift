@@ -294,7 +294,7 @@ struct ScreenshotAlbumContent: View {
                     .padding(4)
 
                 if let b = badge, b.active {
-                    DownloadProgressBadge(progress: b.progress, paused: b.paused)
+                    DownloadProgressBadge(progress: b.progress, paused: b.paused, speedBps: b.speedBps)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if downloaded {
                     LocalCheckDot()

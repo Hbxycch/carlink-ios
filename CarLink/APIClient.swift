@@ -152,12 +152,13 @@ final class APIClient {
 
     // MARK: - 分片上传
 
-    func uploadInit(name: String, size: Int64) async throws -> UploadInitResponse {
+    func uploadInit(name: String, size: Int64, dir: String? = nil) async throws -> UploadInitResponse {
         var req = URLRequest(url: url("/api/upload/init"))
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let body = try JSONSerialization.data(withJSONObject: ["name": name, "size": size])
-        req.httpBody = body
+        var body: [String: Any] = ["name": name, "size": size]
+        if let d = dir, !d.isEmpty { body["dir"] = d }
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, resp) = try await session.data(for: req)
         try Self.checkHTTP(resp)
         return try JSONDecoder().decode(UploadInitResponse.self, from: data)

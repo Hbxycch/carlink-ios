@@ -8,8 +8,10 @@ import SwiftUI
 struct CarFilesBrowserView: View {
     @EnvironmentObject var conn: ConnectionStore
     @EnvironmentObject var downloads: DownloadManager
+    @EnvironmentObject var uploads: UploadManager
 
     @State private var path: String = ""
+    @State private var showUploadPicker = false""
     @State private var entries: [BrowseEntry] = []
     @State private var parent: String?
     @State private var total = 0
@@ -117,10 +119,32 @@ struct CarFilesBrowserView: View {
                     Text("点文件名即可下载到「文件」App › CarLink › 车机文件；文件夹点进去继续浏览。")
                 }
             }
+            uploadSection
         }
         .listStyle(.insetGrouped)
         .navigationTitle(path.isEmpty ? "车机文件" : folderName(path))
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if !path.isEmpty {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showUploadPicker = true
+                    } label: {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                    .disabled(!conn.isConnected)
+                }
+            }
+        }
+        .fileImporter(isPresented: $showUploadPicker,
+                      allowedContentTypes: [.item],
+                      allowsMultipleSelection: true) { result in
+            if case .success(let urls) = result {
+                let dir = path
+                for u in urls { uploads.uploadFile(url: u, to: dir) }
+                if !urls.isEmpty { showToast("已加入上传队列 · \(urls.count) 个文件") }
+            }
+        }
         .refreshable { await load(reset: true) }
         .task { if entries.isEmpty { await load(reset: true) } }
         .overlay(alignment: .bottom) {
@@ -136,6 +160,27 @@ struct CarFilesBrowserView: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: toast)
+    }
+
+    // MARK: 上传到当前目录
+
+    private var uploadSection: some View {
+        let items = uploads.items(in: path)
+        return Group {
+            if !items.isEmpty {
+                Section {
+                    ForEach(items) { item in
+                        UploadRow(item: item) {
+                            uploads.remove(item)
+                        }
+                    }
+                } header: {
+                    Text("上传到本文件夹")
+                } footer: {
+                    Text("上传完成后下拉刷新即可看到新文件。")
+                }
+            }
+        }
     }
 
     // MARK: 行
@@ -212,20 +257,7 @@ struct CarFilesBrowserView: View {
     @ViewBuilder
     private func downloadBadge(_ e: BrowseEntry) -> some View {
         if let b = downloads.badge(for: e.path) {
-            ZStack {
-                Circle()
-                    .stroke(Color(uiColor: .quaternaryLabel), lineWidth: 2)
-                Circle()
-                    .trim(from: 0, to: max(0.02, b.progress))
-                    .stroke(CL.blue, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                if b.paused {
-                    Image(systemName: "pause.fill")
-                        .font(.system(size: 6, weight: .bold))
-                        .foregroundStyle(CL.blue)
-                }
-            }
-            .frame(width: 18, height: 18)
+            DownloadingChip(progress: b.progress, paused: b.paused, speedBps: b.speedBps)
         } else if downloads.items.contains(where: { $0.id == e.path && $0.state == .done }) {
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(CL.green)

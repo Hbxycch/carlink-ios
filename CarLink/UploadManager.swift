@@ -20,6 +20,8 @@ final class UploadItem: Identifiable, ObservableObject {
     let id = UUID()
     let source: UploadSource
     let displayName: String
+    /// 目标目录（车机文件浏览器上传）；nil = 车机常规接收目录
+    let dir: String?
 
     @Published var state: UploadState = .preparing
     @Published var size: Int64 = 0
@@ -27,14 +29,37 @@ final class UploadItem: Identifiable, ObservableObject {
     @Published var message: String?
     @Published var savedPath: String?
 
-    init(source: UploadSource, displayName: String) {
+    init(source: UploadSource, displayName: String, dir: String? = nil) {
         self.source = source
         self.displayName = displayName
+        self.dir = dir
     }
 
     var progress: Double {
         guard size > 0 else { return 0 }
         return min(1, Double(sent) / Double(size))
+    }
+
+    /// 上传速率（字节/秒，EMA 平滑）
+    @Published var speedBps: Double = 0
+    private var lastSpeedAt: Date?
+    private var lastSpeedBytes: Int64 = 0
+
+    func updateSpeed(sent: Int64) {
+        let now = Date()
+        guard let last = lastSpeedAt else {
+            lastSpeedAt = now; lastSpeedBytes = sent; return
+        }
+        let dt = now.timeIntervalSince(last)
+        guard dt >= 0.5 else { return }
+        let inst = Double(sent - lastSpeedBytes) / dt
+        speedBps = speedBps <= 0 ? max(0, inst) : max(0, speedBps * 0.3 + inst * 0.7)
+        lastSpeedAt = now
+        lastSpeedBytes = sent
+    }
+
+    func resetSpeed() {
+        speedBps = 0; lastSpeedAt = nil; lastSpeedBytes = 0
     }
 }
 
@@ -60,14 +85,19 @@ final class UploadManager: ObservableObject {
         Task { await run(item) }
     }
 
-    func uploadFile(url: URL) {
+    func uploadFile(url: URL, to dir: String? = nil) {
         let needScope = url.startAccessingSecurityScopedResource()
-        let item = UploadItem(source: .fileURL(url), displayName: url.lastPathComponent)
+        let item = UploadItem(source: .fileURL(url), displayName: url.lastPathComponent, dir: dir)
         items.insert(item, at: 0)
         Task { [weak self] in
             await self?.run(item)
             if needScope { url.stopAccessingSecurityScopedResource() }
         }
+    }
+
+    /// 指定目录下的上传条目（车机文件浏览器内嵌展示）
+    func items(in dir: String) -> [UploadItem] {
+        items.filter { $0.dir == dir }
     }
 
     func remove(_ item: UploadItem) {
@@ -102,7 +132,8 @@ final class UploadManager: ObservableObject {
             item.state = .running
 
             // 2. init
-            let initResp = try await api.uploadInit(name: name, size: size)
+            item.resetSpeed()
+            let initResp = try await api.uploadInit(name: name, size: size, dir: item.dir)
             guard initResp.ok, let uploadId = initResp.uploadId else {
                 throw APIError(initResp.error ?? "上传初始化失败")
             }
@@ -117,6 +148,7 @@ final class UploadManager: ObservableObject {
                 let newOffset = try await api.uploadChunk(id: uploadId, offset: offset, body: chunk)
                 offset = newOffset
                 item.sent = offset
+                item.updateSpeed(sent: offset)
             }
 
             // 4. complete
@@ -124,12 +156,14 @@ final class UploadManager: ObservableObject {
             guard done.ok else { throw APIError(done.error ?? "完成上传失败") }
             item.state = .done
             item.savedPath = done.path
+            item.resetSpeed()
 
             // 相册导出的临时文件清理
             if case .asset = item.source { try? FileManager.default.removeItem(at: url) }
         } catch {
             item.state = .failed
             item.message = ConnectionStore.describe(error)
+            item.resetSpeed()
         }
     }
 
