@@ -284,10 +284,15 @@ struct MonitorView: View {
         autoHideToast()
         Task {
             do {
+                guard let data = img.jpegData(compressionQuality: 0.9) else {
+                    toast = "保存失败：无法生成图片"
+                    autoHideToast()
+                    return
+                }
                 let dir = FileManager.default.temporaryDirectory
                 let url = dir.appendingPathComponent("monitor-\(current)-\(Int(Date().timeIntervalSince1970)).jpg")
-                try img.jpegData(compressionQuality: 0.9)?.write(to: url)
-                try await PhotoSaver.saveToAlbum(fileAt: url)
+                try data.write(to: url)
+                _ = try await PhotoSaver.saveToAlbum(fileAt: url)
             } catch {
                 toast = "保存失败：\(error.localizedDescription)"
                 autoHideToast()

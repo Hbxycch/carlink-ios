@@ -32,9 +32,11 @@ jobs:
         run: xcodegen generate
 
       - name: CocoaPods install
+        timeout-minutes: 12
         run: pod install --repo-update 2>&1 | tee pod.log
 
       - name: Build (unsigned Release)
+        timeout-minutes: 20
         run: |
           set -o pipefail
           xcodebuild \
