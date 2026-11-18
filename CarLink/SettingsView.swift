@@ -61,6 +61,14 @@ struct SettingsView: View {
             .disabled(!conn.isConnected)
             .foregroundStyle(conn.isConnected ? .primary : .secondary)
 
+            NavigationLink {
+                CameraStreamView()
+            } label: {
+                Label("摄像头推流", systemImage: "dot.radiowaves.left.and.right")
+            }
+            .disabled(!conn.isConnected)
+            .foregroundStyle(conn.isConnected ? .primary : .secondary)
+
             if !conn.savedDevices.isEmpty {
                 ForEach(conn.savedDevices) { d in
                     HStack {

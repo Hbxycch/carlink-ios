@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 // MARK: - 媒体分类（与车机端 /api/files?category= 对应）
 
@@ -254,4 +255,66 @@ struct SavedDevice: Codable, Identifiable, Equatable {
     var port: Int
     var name: String
     var id: String { "\(host):\(port)" }
+}
+
+// MARK: - /api/stream/status 摄像头推流
+
+struct StreamStatusResponse: Codable {
+    let streams: [StreamInfo]
+    let ffmpeg: StreamFfmpeg?
+}
+
+struct StreamInfo: Codable, Identifiable {
+    let camera: String
+    /// 当前是否有推流线程在跑
+    let enabled: Bool?
+    /// 配置里的开关（区分「没开」和「开了但没跑起来」）
+    let on: Bool?
+    let url: String?
+    let state: String?
+    let currentFile: String?
+    let lastError: String?
+    let sinceMs: Int?
+    let segments: Int?
+
+    var id: String { camera }
+
+    var title: String {
+        switch camera {
+        case "front": return "前路"
+        case "rear": return "后路"
+        case "free": return "自由视角"
+        default: return camera
+        }
+    }
+
+    var stateTitle: String {
+        switch state ?? "" {
+        case "pushing": return "推流中"
+        case "waiting": return "等待录像"
+        case "error": return "错误重试"
+        case "no-dir": return "未找到录像目录"
+        case "no-video": return "目录无录像"
+        case "no-ffmpeg": return "组件部署中"
+        case "starting": return "启动中"
+        case "stopped": return "已停止"
+        default: return "未启动"
+        }
+    }
+
+    var stateColor: Color {
+        switch state ?? "" {
+        case "pushing": return .green
+        case "waiting", "starting", "no-ffmpeg": return .orange
+        case "error", "no-dir", "no-video": return .red
+        default: return .secondary
+        }
+    }
+}
+
+struct StreamFfmpeg: Codable {
+    let state: String?
+    let progress: Int?
+    let installed: Bool?
+    let error: String?
 }

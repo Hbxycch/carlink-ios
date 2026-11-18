@@ -220,4 +220,21 @@ final class APIClient {
         return UploadCompleteResponse(ok: (resp as? HTTPURLResponse)?.statusCode == 200,
                                       saved: nil, path: nil, name: nil, error: nil)
     }
+
+    // MARK: - 摄像头推流
+
+    func streamStatus() async throws -> StreamStatusResponse {
+        try await getJSON("/api/stream/status")
+    }
+
+    /// 远程修改车机配置（键名与车机端 /api/config 一致，
+    /// 如 stream_front_on / stream_front_url；改完车机会自动重载推流）
+    func updateConfig(_ body: [String: Any]) async throws {
+        var req = URLRequest(url: url("/api/config"))
+        req.httpMethod = "PUT"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, resp) = try await session.data(for: req)
+        try Self.checkHTTP(resp, body: data)
+    }
 }
