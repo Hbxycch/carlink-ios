@@ -170,7 +170,7 @@ struct TransferTabView: View {
                 }
             }
 
-            if let note = r.note, !r.note.isEmpty, !r.isLive {
+            if let note = r.note, !note.isEmpty, !r.isLive {
                 Text(note).font(.caption2).foregroundStyle(.orange)
             }
 
