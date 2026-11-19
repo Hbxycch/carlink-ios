@@ -16,7 +16,7 @@ struct MonitorView: View {
     @EnvironmentObject var conn: ConnectionStore
     @EnvironmentObject var settings: SettingsStore
 
-    @State private var layout = 4                 // 1 / 2 / 4
+    @State private var layout = 4                 // 1 / 2 / 3 / 4
     @State private var patrol = false
     @State private var current = "front"
     @State private var streams: [String: StreamInfo] = [:]
@@ -141,7 +141,7 @@ struct MonitorView: View {
     private var segmentRow: some View {
         HStack(spacing: 8) {
             HStack(spacing: 2) {
-                ForEach([1, 2, 4], id: \.self) { n in
+                ForEach([1, 2, 3, 4], id: \.self) { n in
                     Button {
                         layout = n
                     } label: {
@@ -193,43 +193,75 @@ struct MonitorView: View {
         }
     }
 
-    private var columns: [GridItem] {
-        Array(repeating: GridItem(.flexible(), spacing: 4), count: layout == 1 ? 1 : 2)
+    /// 每行几个：2 路 / 3 路都是「一行一个」竖排；4 路是 2×2；1 路单格
+    private var perRow: Int { layout == 4 ? 2 : 1 }
+
+    private var rowCount: Int {
+        let cols = perRow
+        return max(1, (visibleCams.count + cols - 1) / cols)
     }
 
+    /// 宫格：显式计算格宽/格高，不依赖 LazyVGrid 的弹性列 + aspectRatio
+    /// （两者叠加时列宽会被内容反推，2 路会挤成一行一个竖排以外的怪异排布）
     private var grid: some View {
-        LazyVGrid(columns: columns, spacing: 4) {
-            ForEach(visibleCams, id: \.self) { cam in
-                MonitorCell(
-                    cam: cam,
-                    title: camTitle(cam),
-                    selected: layout != 4 && cam == current,
-                    source: settings.monitorSource,
-                    hlsURL: hlsURL(cam),
-                    fps: Double(max(1, settings.monitorSnapshotFps)),
-                    online: conn.isOnline,
-                    hlsFailed: hlsFailed.contains(cam),
-                    streamState: streams[cam]?.state,
-                    onFail: { hlsFailed.insert(cam) },
-                    onTap: { current = cam },
-                    onDoubleTap: { current = cam; fullCam = cam },
-                    onFrame: { img in
-                        if let img = img { frames[cam] = img } else { frames.removeValue(forKey: cam) }
+        GeometryReader { geo in
+            let gap: CGFloat = 4
+            let cols = perRow
+            let rows = rowCount
+            let w = max(60, (geo.size.width - gap * CGFloat(cols - 1)) / CGFloat(cols))
+            let hByWidth = w * 9 / 16
+            // 3 路竖排时纵向空间可能不够：按可用高度收缩，画面等比裁切，绝不溢出
+            let hByHeight = (geo.size.height - gap * CGFloat(rows - 1)) / CGFloat(rows)
+            let h = max(56, min(hByWidth, hByHeight))
+
+            VStack(spacing: gap) {
+                ForEach(0..<rows, id: \.self) { r in
+                    HStack(spacing: gap) {
+                        ForEach(0..<cols, id: \.self) { c in
+                            let idx = r * cols + c
+                            if idx < visibleCams.count {
+                                cell(visibleCams[idx], w: w, h: h)
+                            } else {
+                                reservedCell(w: w, h: h)
+                            }
+                        }
                     }
-                )
-                .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                }
             }
-            if layout == 4 {
-                RoundedRectangle(cornerRadius: 7)
-                    .fill(Color(uiColor: .secondarySystemGroupedBackground))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 7)
-                            .stroke(Color(uiColor: .separator), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
-                    )
-                    .overlay(Text("CH04 预留").font(.system(size: 10)).foregroundStyle(.secondary))
-                    .aspectRatio(16.0 / 9.0, contentMode: .fit)
-            }
+            .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
         }
+    }
+
+    private func cell(_ cam: String, w: CGFloat, h: CGFloat) -> some View {
+        MonitorCell(
+            cam: cam,
+            title: camTitle(cam),
+            selected: layout != 4 && cam == current,
+            source: settings.monitorSource,
+            hlsURL: hlsURL(cam),
+            fps: Double(max(1, settings.monitorSnapshotFps)),
+            online: conn.isOnline,
+            hlsFailed: hlsFailed.contains(cam),
+            streamState: streams[cam]?.state,
+            onFail: { hlsFailed.insert(cam) },
+            onTap: { current = cam },
+            onDoubleTap: { current = cam; fullCam = cam },
+            onFrame: { img in
+                if let img = img { frames[cam] = img } else { frames.removeValue(forKey: cam) }
+            }
+        )
+        .frame(width: w, height: h)
+    }
+
+    private func reservedCell(w: CGFloat, h: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: 7)
+            .fill(Color(uiColor: .secondarySystemGroupedBackground))
+            .overlay(
+                RoundedRectangle(cornerRadius: 7)
+                    .stroke(Color(uiColor: .separator), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+            )
+            .overlay(Text("CH04 预留").font(.system(size: 10)).foregroundStyle(.secondary))
+            .frame(width: w, height: h)
     }
 
     // MARK: 工具条

@@ -10,6 +10,9 @@ struct CarFilesBrowserView: View {
     @EnvironmentObject var downloads: DownloadManager
     @EnvironmentObject var uploads: UploadManager
 
+    /// 打开时直接定位到的目录（如截图页跳转到 /sdcard/Pictures/CarCap）
+    var initialPath: String = ""
+
     @State private var path: String = ""
     @State private var showUploadPicker = false
     @State private var entries: [BrowseEntry] = []
@@ -146,7 +149,10 @@ struct CarFilesBrowserView: View {
             }
         }
         .refreshable { await load(reset: true) }
-        .task { if entries.isEmpty { await load(reset: true) } }
+        .task {
+            if path.isEmpty, !initialPath.isEmpty { path = initialPath }
+            if entries.isEmpty { await load(reset: true) }
+        }
         .overlay(alignment: .bottom) {
             if let t = toast {
                 Text(t)

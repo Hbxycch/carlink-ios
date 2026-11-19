@@ -1,8 +1,33 @@
 import SwiftUI
+import UIKit
 import PhotosUI
 import UniformTypeIdentifiers
 
-// MARK: - 传输 Tab：上传 + 下载队列
+// MARK: - 车机截图状态
+
+private enum ScreenPhase {
+    case idle
+    case capturing(Date)
+    case done(ScreenShotResult)
+    case failed(String)
+}
+
+private struct ScreenShotResult {
+    let image: UIImage
+    /// adb = 现场截屏；cache = 车机 ADB 不可用时回退最近一张
+    let source: String
+    let ms: Int
+    let width: Int
+    let height: Int
+    let bytes: Int
+    let note: String?
+    let at: Date
+    let fileURL: URL
+
+    var isLive: Bool { source == "adb" }
+}
+
+// MARK: - 传输 Tab：车机屏幕截图 + 上传 + 下载队列
 
 struct TransferTabView: View {
     @EnvironmentObject var conn: ConnectionStore
@@ -12,17 +37,232 @@ struct TransferTabView: View {
     @State private var photoSelection: [PhotosPickerItem] = []
     @State private var showFileImporter = false
 
+    /// 截图状态机：idle → capturing(开始时间) → done / failed
+    @State private var screenPhase: ScreenPhase = .idle
+    @State private var screenToast: String?
+
     var body: some View {
         NavigationStack {
             List {
+                screenSection
                 carFilesSection
                 uploadSection
                 downloadSection
             }
             .listStyle(.insetGrouped)
             .navigationTitle("传输")
+            .overlay(alignment: .bottom) {
+                if let t = screenToast {
+                    Text(t)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(Capsule().fill(Color.black.opacity(0.74)))
+                        .padding(.bottom, 22)
+                        .transition(.opacity)
+                }
+            }
+            .animation(.easeInOut(duration: 0.18), value: screenToast)
         }
     }
+
+    // MARK: - 车机屏幕截图（服务端现场截屏）
+
+    private var screenSupported: Bool {
+        // 老车机没有这个字段时按支持处理：真正调用会返回 404 并给出升级提示
+        conn.carInfo?.screenCapture != false
+    }
+
+    private var screenSection: some View {
+        Section {
+            if !conn.isLinkUsable {
+                Label(conn.hasSession ? "车机连接已断开，正在自动重连…" : "未连接车机，连接后可截图",
+                      systemImage: "wifi.slash")
+                    .foregroundStyle(.secondary)
+                    .font(.subheadline)
+            } else if !screenSupported {
+                Label("车机端 v\(conn.carInfo?.version ?? "?") 不支持截图，请先升级到 1.1.29",
+                      systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+                    .font(.subheadline)
+            } else {
+                switch screenPhase {
+                case .idle:
+                    Button {
+                        captureScreen()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Label("截取车机屏幕", systemImage: "camera.viewfinder")
+                            Spacer()
+                            Text("约 1 秒").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                case .capturing(let started):
+                    HStack(spacing: 10) {
+                        ProgressView()
+                        TimelineView(.periodic(from: .now, by: 0.2)) { ctx in
+                            Text("正在截取车机屏幕… 已用时 "
+                                 + String(format: "%.1f", max(0, ctx.date.timeIntervalSince(started)))
+                                 + "s")
+                                .font(.subheadline)
+                                .monospacedDigit()
+                        }
+                    }
+                    .padding(.vertical, 4)
+                case .done(let r):
+                    screenResult(r)
+                case .failed(let msg):
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label(msg, systemImage: "exclamationmark.triangle")
+                            .font(.subheadline)
+                            .foregroundStyle(.orange)
+                        HStack(spacing: 14) {
+                            Button("重试") { captureScreen() }
+                                .font(.subheadline.weight(.medium))
+                            NavigationLink("查看车机全部截图") {
+                                CarFilesBrowserView(initialPath: screenDir)
+                            }
+                            .font(.subheadline)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+        } header: {
+            Text("车机屏幕")
+        } footer: {
+            Text("车机现场截屏后直接把图片回传手机，不在车机留存。截图只在这里预览，需要时点「保存到相册」。车机端 1.1.29+ 支持。")
+        }
+    }
+
+    private var screenDir: String { "/sdcard/Pictures/CarCap" }
+
+    @ViewBuilder
+    private func screenResult(_ r: ScreenShotResult) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Image(uiImage: r.image)
+                .resizable()
+                .scaledToFit()
+                .frame(maxWidth: .infinity, maxHeight: 210)
+                .background(Color.black)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+
+            HStack(spacing: 6) {
+                Text("\(r.width)×\(r.height) · \(Fmt.bytes(r.bytes)) · \(Self.timeText.string(from: r.at))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+                if !r.isLive {
+                    Text("最近一张")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.orange.opacity(0.14)))
+                } else {
+                    Text("现场截屏")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.green)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.green.opacity(0.14)))
+                }
+            }
+
+            if let note = r.note, !r.note.isEmpty, !r.isLive {
+                Text(note).font(.caption2).foregroundStyle(.orange)
+            }
+
+            HStack(spacing: 16) {
+                Button {
+                    saveShot(r)
+                } label: {
+                    Label("保存到相册", systemImage: "square.and.arrow.down")
+                }
+                .font(.subheadline)
+                ShareLink(item: r.fileURL) {
+                    Label("分享", systemImage: "square.and.arrow.up")
+                }
+                .font(.subheadline)
+                Button {
+                    captureScreen()
+                } label: {
+                    Label("重截", systemImage: "arrow.clockwise")
+                }
+                .font(.subheadline)
+            }
+            .buttonStyle(.borderless)
+
+            NavigationLink {
+                CarFilesBrowserView(initialPath: screenDir)
+            } label: {
+                HStack {
+                    Label("查看车机全部截图", systemImage: "photo.on.rectangle")
+                    Spacer()
+                    Text("CarCap").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .font(.subheadline)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func captureScreen() {
+        guard let api = conn.client else {
+            screenPhase = .failed("未连接车机")
+            return
+        }
+        screenPhase = .capturing(Date())
+        Task {
+            do {
+                let cap = try await api.captureScreen()
+                guard let img = UIImage(data: cap.data) else {
+                    screenPhase = .failed("车机返回的不是有效图片")
+                    return
+                }
+                let name = "carlink-screen-\(Int(Date().timeIntervalSince1970)).png"
+                let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+                try cap.data.write(to: url)
+                screenPhase = .done(ScreenShotResult(image: img,
+                                                     source: cap.source,
+                                                     ms: cap.ms,
+                                                     width: cap.width,
+                                                     height: cap.height,
+                                                     bytes: cap.data.count,
+                                                     note: cap.note,
+                                                     at: Date(),
+                                                     fileURL: url))
+            } catch {
+                screenPhase = .failed((error as? APIError)?.message ?? error.localizedDescription)
+            }
+        }
+    }
+
+    private func saveShot(_ r: ScreenShotResult) {
+        Task {
+            do {
+                _ = try await PhotoSaver.saveToAlbum(fileAt: r.fileURL)
+                screenToast = "已保存到相册"
+            } catch {
+                screenToast = "保存失败：\(error.localizedDescription)"
+            }
+            hideToast()
+        }
+    }
+
+    private func hideToast() {
+        let text = screenToast
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
+            if screenToast == text { screenToast = nil }
+        }
+    }
+
+    static let timeText: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        return f
+    }()
 
     // MARK: - 车机文件（浏览内部存储 / SD 卡）
 

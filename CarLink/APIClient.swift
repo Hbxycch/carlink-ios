@@ -279,6 +279,52 @@ final class APIClient {
         try await getJSON("/api/stream/status")
     }
 
+    // MARK: - 车机屏幕截图（/api/screen/capture）
+
+    /// 一次截图结果。source: adb = 现场截屏；cache = 车机 ADB 不可用时回退最近一张
+    struct ScreenCapture {
+        let data: Data
+        let source: String
+        let ms: Int
+        let width: Int
+        let height: Int
+        let note: String?
+
+        var isLive: Bool { source == "adb" }
+    }
+
+    /// 让车机现场截一张屏（PNG）。12s 超时：车机侧实测 0.4~0.6s，留足余量但不干等。
+    func captureScreen() async throws -> ScreenCapture {
+        var req = URLRequest(url: url("/api/screen/capture",
+                                      query: ["t": "\(Int(Date().timeIntervalSince1970 * 1000))"]))
+        req.timeoutInterval = 12
+        req.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        let (data, resp) = try await session.data(for: req)
+        guard let http = resp as? HTTPURLResponse else { throw APIError("无效响应") }
+        guard (200..<300).contains(http.statusCode) else {
+            if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let msg = obj["error"] as? String, !msg.isEmpty {
+                throw APIError(msg)
+            }
+            throw APIError(http.statusCode == 404 ? "车机端不支持截图，请升级到 1.1.29" : "HTTP \(http.statusCode)")
+        }
+        func headerInt(_ name: String) -> Int {
+            Int(http.value(forHTTPHeaderField: name) ?? "") ?? 0
+        }
+        let noteRaw = http.value(forHTTPHeaderField: "X-CarLink-Capture-Note")
+        return ScreenCapture(data: data,
+                             source: http.value(forHTTPHeaderField: "X-CarLink-Capture") ?? "adb",
+                             ms: headerInt("X-CarLink-Capture-Ms"),
+                             width: headerInt("X-CarLink-Width"),
+                             height: headerInt("X-CarLink-Height"),
+                             note: noteRaw?.removingPercentEncoding)
+    }
+
+    /// 车机 CarCap 目录里最近的截图（名称 / 大小 / 时间 / 路径）
+    func recentScreenshots(limit: Int = 20) async throws -> ScreenShotsResponse {
+        try await getJSON("/api/screen/recent", query: ["limit": "\(limit)"])
+    }
+
     /// 远程修改车机配置（键名与车机端 /api/config 一致，
     /// 如 stream_front_on / stream_front_url；改完车机会自动重载推流）
     func updateConfig(_ body: [String: Any]) async throws {

@@ -136,6 +136,8 @@ struct CarInfo: Codable {
     let counts: Counts?
     /// 车机是否支持快照流（v1.1.28+）
     let cameraFrame: Bool?
+    /// 车机是否支持屏幕截图（v1.1.29+）
+    let screenCapture: Bool?
 
     /// 容错解码：老版本车机缺字段（如 port / version）也允许连上，
     /// 避免浏览器能打开、App 却因 JSON 解析失败连不上的情况
@@ -153,6 +155,7 @@ struct CarInfo: Codable {
         switches = try? c.decodeIfPresent(Switches.self, forKey: .switches)
         counts = try? c.decodeIfPresent(Counts.self, forKey: .counts)
         cameraFrame = try? c.decodeIfPresent(Bool.self, forKey: .cameraFrame)
+        screenCapture = try? c.decodeIfPresent(Bool.self, forKey: .screenCapture)
     }
 
     /// 机型展示："ROCO K706"（无 model 时退回 brand）
@@ -351,4 +354,25 @@ struct CameraFrameStatus: Codable, Identifiable {
 
 struct CameraFramesResponse: Codable {
     let frames: [CameraFrameStatus]
+}
+
+// MARK: - /api/screen/recent（车机 CarCap 目录里的历史截图）
+
+struct ScreenShotItem: Codable, Identifiable {
+    let name: String
+    let path: String
+    let size: Int64?
+    let mtime: Int64?
+
+    var id: String { path }
+
+    var date: Date? {
+        guard let m = mtime, m > 0 else { return nil }
+        return Date(timeIntervalSince1970: TimeInterval(m) / 1000)
+    }
+}
+
+struct ScreenShotsResponse: Codable {
+    let shots: [ScreenShotItem]
+    let dir: String?
 }
