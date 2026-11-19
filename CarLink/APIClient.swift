@@ -325,6 +325,20 @@ final class APIClient {
         try await getJSON("/api/screen/recent", query: ["limit": "\(limit)"])
     }
 
+    /// 远程重启车机整机（车机端 v1.1.30+）。
+    /// 车机端会先回 200 再延迟 1.5s 执行 reboot，避免连接被掐断让客户端误判失败。
+    func rebootCar() async throws {
+        var req = URLRequest(url: url("/api/device/reboot"))
+        req.httpMethod = "POST"
+        req.timeoutInterval = 8
+        req.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        let (data, resp) = try await session.data(for: req)
+        if let http = resp as? HTTPURLResponse, http.statusCode == 404 {
+            throw APIError("车机端不支持远程重启，请先升级到 v1.1.30")
+        }
+        try Self.checkHTTP(resp, body: data)
+    }
+
     /// 远程修改车机配置（键名与车机端 /api/config 一致，
     /// 如 stream_front_on / stream_front_url；改完车机会自动重载推流）
     func updateConfig(_ body: [String: Any]) async throws {

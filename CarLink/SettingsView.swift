@@ -10,10 +10,16 @@ struct SettingsView: View {
     @EnvironmentObject var updateChecker: UpdateChecker
     @Environment(\.openURL) private var openURL
 
+    @State private var showRebootConfirm = false
+    @State private var showRebootResult = false
+    @State private var rebooting = false
+    @State private var rebootMessage = ""
+
     var body: some View {
         NavigationStack {
             List {
                 connectionSection
+                deviceControlSection
                 monitorSection
                 downloadSection
                 playbackSection
@@ -22,6 +28,17 @@ struct SettingsView: View {
             }
             .listStyle(.insetGrouped)
             .navigationTitle("设置")
+            .alert("重启车机？", isPresented: $showRebootConfirm) {
+                Button("取消", role: .cancel) {}
+                Button("确认重启", role: .destructive) { reboot() }
+            } message: {
+                Text("车机整机将立即重启，正在进行的播放、录像推流、上传与下载都会中断。确认继续？")
+            }
+            .alert("车机重启", isPresented: $showRebootResult) {
+                Button("好", role: .cancel) {}
+            } message: {
+                Text(rebootMessage)
+            }
         }
     }
 
@@ -90,6 +107,48 @@ struct SettingsView: View {
             Text("连接")
         } footer: {
             Text("开启后，每次进入 App 或回到前台时自动连接最近一次使用的车机（约 20 秒内不重复尝试）。")
+        }
+    }
+
+    // MARK: 车机控制（远程重启整机）
+
+    private var rebootSupported: Bool {
+        conn.carInfo?.deviceControl == true
+    }
+
+    private var deviceControlSection: some View {
+        Section {
+            Button(role: .destructive) {
+                showRebootConfirm = true
+            } label: {
+                HStack {
+                    Label("重启车机", systemImage: "power")
+                    Spacer()
+                    if rebooting { ProgressView() }
+                }
+            }
+            .disabled(!conn.isConnected || !rebootSupported || rebooting)
+        } header: {
+            Text("车机控制")
+        } footer: {
+            Text(rebootSupported
+                 ? "整机热重启，约 30 秒后恢复；正在进行的播放、推流、上传与下载都会中断。车机会先回执再执行，重启期间连接显示断开属正常现象。注意：CarLink 车机端目前未配置开机自启，重启后可能需要在车机屏幕上手动打开一次 App 才能自动连回。"
+                 : "需要车机端 v1.1.30 及以上版本，请先升级车机端。")
+        }
+    }
+
+    private func reboot() {
+        guard let api = conn.client else { return }
+        rebooting = true
+        Task {
+            defer { rebooting = false }
+            do {
+                try await api.rebootCar()
+                rebootMessage = "重启指令已下发，车机约 30 秒后重新上线。重启期间连接会断开，属正常现象。"
+            } catch {
+                rebootMessage = "重启失败：\((error as? APIError)?.message ?? error.localizedDescription)"
+            }
+            showRebootResult = true
         }
     }
 

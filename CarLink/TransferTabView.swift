@@ -68,7 +68,12 @@ struct TransferTabView: View {
             }
             .animation(.easeInOut(duration: 0.18), value: screenToast)
             .fullScreenCover(item: $previewShot) { shot in
-                ScreenShotFullscreen(shot: shot)
+                ScreenShotFullscreen(shot: shot) {
+                    // 全屏里点「重截」：就地刷新大图，同时让退出后的结果卡也是新图
+                    let r = try await fetchShot()
+                    screenPhase = .done(r)
+                    return r
+                }
             }
         }
     }
@@ -232,34 +237,47 @@ struct TransferTabView: View {
     }
 
     private func captureScreen() {
-        guard let api = conn.client else {
+        guard conn.client != nil else {
             screenPhase = .failed("未连接车机")
             return
         }
         screenPhase = .capturing(Date())
         Task {
             do {
-                let cap = try await api.captureScreen()
-                guard let img = UIImage(data: cap.data) else {
-                    screenPhase = .failed("车机返回的不是有效图片")
-                    return
-                }
-                let name = "carlink-screen-\(Int(Date().timeIntervalSince1970)).png"
-                let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
-                try cap.data.write(to: url)
-                screenPhase = .done(ScreenShotResult(image: img,
-                                                     source: cap.source,
-                                                     ms: cap.ms,
-                                                     width: cap.width,
-                                                     height: cap.height,
-                                                     bytes: cap.data.count,
-                                                     note: cap.note,
-                                                     at: Date(),
-                                                     fileURL: url))
+                screenPhase = .done(try await fetchShot())
             } catch {
-                screenPhase = .failed((error as? APIError)?.message ?? error.localizedDescription)
+                screenPhase = .failed(Self.errorText(error))
             }
         }
+    }
+
+    /// 单次现场截屏：传输页与全屏预览里的「重截」共用
+    private func fetchShot() async throws -> ScreenShotResult {
+        guard let api = conn.client else {
+            throw NSError(domain: "CarLink", code: -1,
+                          userInfo: [NSLocalizedDescriptionKey: "未连接车机"])
+        }
+        let cap = try await api.captureScreen()
+        guard let img = UIImage(data: cap.data) else {
+            throw NSError(domain: "CarLink", code: -2,
+                          userInfo: [NSLocalizedDescriptionKey: "车机返回的不是有效图片"])
+        }
+        let name = "carlink-screen-\(Int(Date().timeIntervalSince1970)).png"
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+        try cap.data.write(to: url)
+        return ScreenShotResult(image: img,
+                                source: cap.source,
+                                ms: cap.ms,
+                                width: cap.width,
+                                height: cap.height,
+                                bytes: cap.data.count,
+                                note: cap.note,
+                                at: Date(),
+                                fileURL: url)
+    }
+
+    static func errorText(_ error: Error) -> String {
+        (error as? APIError)?.message ?? error.localizedDescription
     }
 
     private func saveShot(_ r: ScreenShotResult) {
@@ -572,6 +590,8 @@ struct DownloadRow: View {
 
 private struct ScreenShotFullscreen: View {
     let shot: ScreenShotResult
+    /// 重新截取一张车机屏幕；全屏里的「重截」按钮调用
+    let capture: () async throws -> ScreenShotResult
 
     @Environment(\.dismiss) private var dismiss
 
@@ -582,12 +602,17 @@ private struct ScreenShotFullscreen: View {
     @State private var showChrome = true
     @State private var landscape = false
     @State private var toast: String?
+    /// 全屏内重截后的新图（不改动 previewShot，避免 fullScreenCover 重建）
+    @State private var refreshed: ScreenShotResult?
+    @State private var recapturing = false
+
+    private var display: ScreenShotResult { refreshed ?? shot }
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
 
-            Image(uiImage: shot.image)
+            Image(uiImage: display.image)
                 .resizable()
                 .scaledToFit()
                 .scaleEffect(scale)
@@ -623,9 +648,9 @@ private struct ScreenShotFullscreen: View {
     }
 
     private var subtitle: String {
-        var s = "\(shot.width)×\(shot.height) · \(Fmt.bytes(shot.bytes)) · "
-            + TransferTabView.timeText.string(from: shot.at)
-        s += shot.isLive ? " · 现场截屏" : " · 最近一张"
+        var s = "\(display.width)×\(display.height) · \(Fmt.bytes(display.bytes)) · "
+            + TransferTabView.timeText.string(from: display.at)
+        s += display.isLive ? " · 现场截屏" : " · 最近一张"
         return s
     }
 
@@ -674,15 +699,28 @@ private struct ScreenShotFullscreen: View {
 
             Spacer(minLength: 0)
 
-            HStack(spacing: 22) {
+            HStack(spacing: 16) {
                 Button {
                     save()
                 } label: {
                     Label("保存到相册", systemImage: "square.and.arrow.down")
                 }
-                ShareLink(item: shot.fileURL) {
+                ShareLink(item: display.fileURL) {
                     Label("分享", systemImage: "square.and.arrow.up")
                 }
+                Button {
+                    recapture()
+                } label: {
+                    if recapturing {
+                        ProgressView()
+                            .tint(.white)
+                            .frame(width: 26)
+                    } else {
+                        Label("重截", systemImage: "arrow.clockwise")
+                    }
+                }
+                .disabled(recapturing)
+                .accessibilityLabel("重新截取车机屏幕")
                 Button {
                     toggleOrientation()
                 } label: {
@@ -692,6 +730,8 @@ private struct ScreenShotFullscreen: View {
                 .accessibilityLabel(landscape ? "切回竖屏" : "切换横屏")
             }
             .font(.footnote.weight(.medium))
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
             .foregroundStyle(.white)
             .tint(.white)
             .padding(.horizontal, 18)
@@ -766,15 +806,35 @@ private struct ScreenShotFullscreen: View {
     private func save() {
         Task {
             do {
-                _ = try await PhotoSaver.saveToAlbum(fileAt: shot.fileURL)
-                toast = "已保存到相册"
+                _ = try await PhotoSaver.saveToAlbum(fileAt: display.fileURL)
+                flash("已保存到相册")
             } catch {
-                toast = "保存失败：\(error.localizedDescription)"
+                flash("保存失败：\(error.localizedDescription)")
             }
-            let text = toast
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.9) {
-                if toast == text { toast = nil }
+        }
+    }
+
+    /// 全屏内重新截一张车机屏幕：大图就地刷新，不用退出再进
+    private func recapture() {
+        guard !recapturing else { return }
+        recapturing = true
+        Task {
+            defer { recapturing = false }
+            do {
+                let r = try await capture()
+                refreshed = r
+                resetZoom()
+                flash("已重新截取车机屏幕")
+            } catch {
+                flash("截取失败：\(TransferTabView.errorText(error))")
             }
+        }
+    }
+
+    private func flash(_ text: String) {
+        toast = text
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.9) {
+            if toast == text { toast = nil }
         }
     }
 }
