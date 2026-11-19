@@ -566,8 +566,9 @@ struct DownloadRow: View {
 
 // MARK: - 车机截图全屏预览
 //
-// 传输 Tab 里点截图缩略图直接进这里：自动转横屏、整屏看细节，
-// 支持双击 / 捏合放大、放大后拖动，单击收起工具栏。退出恢复竖屏。
+// 传输 Tab 里点截图缩略图直接进这里：默认竖屏整屏看图，
+// 想看细节可点底部「横屏」按钮切换方向（退出自动恢复竖屏），
+// 支持双击 / 捏合放大、放大后拖动，单击收起工具栏。
 
 private struct ScreenShotFullscreen: View {
     let shot: ScreenShotResult
@@ -579,6 +580,7 @@ private struct ScreenShotFullscreen: View {
     @State private var offset: CGSize = .zero
     @State private var baseOffset: CGSize = .zero
     @State private var showChrome = true
+    @State private var landscape = false
     @State private var toast: String?
 
     var body: some View {
@@ -612,8 +614,8 @@ private struct ScreenShotFullscreen: View {
         }
         .animation(.easeInOut(duration: 0.18), value: toast)
         .onAppear {
-            // 车机截图多为 16:9 宽幅，全屏必须横过来才看得清
-            DispatchQueue.main.async { OrientationLock.shared.set(.landscape) }
+            // 默认竖屏，是否转横屏交给底部按钮
+            DispatchQueue.main.async { OrientationLock.shared.set(.portrait) }
         }
         .onDisappear {
             OrientationLock.shared.set(.portrait)
@@ -648,6 +650,8 @@ private struct ScreenShotFullscreen: View {
                     Text(subtitle)
                         .font(.caption2)
                         .foregroundStyle(.white.opacity(0.66))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                 }
 
                 Spacer(minLength: 0)
@@ -670,7 +674,7 @@ private struct ScreenShotFullscreen: View {
 
             Spacer(minLength: 0)
 
-            HStack(spacing: 26) {
+            HStack(spacing: 22) {
                 Button {
                     save()
                 } label: {
@@ -679,6 +683,13 @@ private struct ScreenShotFullscreen: View {
                 ShareLink(item: shot.fileURL) {
                     Label("分享", systemImage: "square.and.arrow.up")
                 }
+                Button {
+                    toggleOrientation()
+                } label: {
+                    Label(landscape ? "竖屏" : "横屏",
+                          systemImage: landscape ? "rotate.left" : "rotate.right")
+                }
+                .accessibilityLabel(landscape ? "切回竖屏" : "切换横屏")
             }
             .font(.footnote.weight(.medium))
             .foregroundStyle(.white)
@@ -744,6 +755,12 @@ private struct ScreenShotFullscreen: View {
 
     private func toggleChrome() {
         withAnimation(.easeInOut(duration: 0.16)) { showChrome.toggle() }
+    }
+
+    /// 默认竖屏，由用户点「横屏」主动切换；退出时统一恢复竖屏
+    private func toggleOrientation() {
+        landscape.toggle()
+        OrientationLock.shared.set(landscape ? .landscape : .portrait)
     }
 
     private func save() {
