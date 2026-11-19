@@ -604,7 +604,18 @@ private struct ScreenShotFullscreen: View {
     @State private var toast: String?
     /// 全屏内重截后的新图（不改动 previewShot，避免 fullScreenCover 重建）
     @State private var refreshed: ScreenShotResult?
-    @State private var recapturing = false
+    /// 手动重截 / 自动连拍共用的忙标志，避免两张截图并发
+    @State private var busy = false
+
+    // MARK: 自动截图
+    /// 0 = 关闭；否则为间隔秒数
+    @State private var autoSeconds = 0
+    /// 每次开启 / 改间隔 / 停止都 +1，驱动 .task(id:) 取消上一轮循环
+    @State private var autoSession = 0
+    @State private var autoCount = 0
+    @State private var autoNextAt: Date?
+    @State private var autoSave = false
+    @State private var autoFailStreak = 0
 
     private var display: ScreenShotResult { refreshed ?? shot }
 
@@ -638,11 +649,16 @@ private struct ScreenShotFullscreen: View {
             }
         }
         .animation(.easeInOut(duration: 0.18), value: toast)
+        // id 变化 / 视图消失会自动 cancel 上一轮连拍，无需手动管理 Timer
+        .task(id: autoSession) {
+            await autoRun()
+        }
         .onAppear {
             // 默认竖屏，是否转横屏交给底部按钮
             DispatchQueue.main.async { OrientationLock.shared.set(.portrait) }
         }
         .onDisappear {
+            stopAuto()
             OrientationLock.shared.set(.portrait)
         }
     }
@@ -699,6 +715,8 @@ private struct ScreenShotFullscreen: View {
 
             Spacer(minLength: 0)
 
+            if autoSeconds > 0 { autoStatusBar }
+
             HStack(spacing: 16) {
                 Button {
                     save()
@@ -711,7 +729,7 @@ private struct ScreenShotFullscreen: View {
                 Button {
                     recapture()
                 } label: {
-                    if recapturing {
+                    if busy {
                         ProgressView()
                             .tint(.white)
                             .frame(width: 26)
@@ -719,7 +737,7 @@ private struct ScreenShotFullscreen: View {
                         Label("重截", systemImage: "arrow.clockwise")
                     }
                 }
-                .disabled(recapturing)
+                .disabled(busy)
                 .accessibilityLabel("重新截取车机屏幕")
                 Button {
                     toggleOrientation()
@@ -728,6 +746,37 @@ private struct ScreenShotFullscreen: View {
                           systemImage: landscape ? "rotate.left" : "rotate.right")
                 }
                 .accessibilityLabel(landscape ? "切回竖屏" : "切换横屏")
+
+                Menu {
+                    Section("自动截图间隔") {
+                        ForEach([2, 3, 5, 10], id: \.self) { s in
+                            Button {
+                                startAuto(s)
+                            } label: {
+                                if autoSeconds == s {
+                                    Label("每 \(s) 秒", systemImage: "checkmark")
+                                } else {
+                                    Text("每 \(s) 秒")
+                                }
+                            }
+                        }
+                    }
+                    Button {
+                        autoSave.toggle()
+                    } label: {
+                        Label(autoSave ? "自动保存：开" : "自动保存：关",
+                              systemImage: autoSave ? "checkmark.square" : "square")
+                    }
+                    if autoSeconds > 0 {
+                        Button("停止自动截图", role: .destructive) {
+                            stopAuto()
+                        }
+                    }
+                } label: {
+                    Label(autoSeconds > 0 ? "\(autoSeconds)s" : "自动",
+                          systemImage: autoSeconds > 0 ? "timer.circle.fill" : "timer")
+                }
+                .accessibilityLabel("自动截图设置")
             }
             .font(.footnote.weight(.medium))
             .lineLimit(1)
@@ -816,10 +865,10 @@ private struct ScreenShotFullscreen: View {
 
     /// 全屏内重新截一张车机屏幕：大图就地刷新，不用退出再进
     private func recapture() {
-        guard !recapturing else { return }
-        recapturing = true
+        guard !busy else { return }
+        busy = true
         Task {
-            defer { recapturing = false }
+            defer { busy = false }
             do {
                 let r = try await capture()
                 refreshed = r
@@ -827,6 +876,108 @@ private struct ScreenShotFullscreen: View {
                 flash("已重新截取车机屏幕")
             } catch {
                 flash("截取失败：\(TransferTabView.errorText(error))")
+            }
+        }
+    }
+
+    // MARK: - 自动截图（按间隔连拍）
+
+    /// 连拍状态条：显示间隔、已截张数、下一张倒计时与停止按钮
+    private var autoStatusBar: some View {
+        TimelineView(.periodic(from: .now, by: 0.5)) { ctx in
+            HStack(spacing: 7) {
+                Circle()
+                    .fill(Color.green)
+                    .frame(width: 6, height: 6)
+                Text("自动 · 每 \(autoSeconds)s · 已 \(autoCount) 张")
+                    .font(.caption2.weight(.semibold))
+                    .lineLimit(1)
+                if autoSave {
+                    Image(systemName: "square.and.arrow.down")
+                        .font(.caption2)
+                }
+                Spacer(minLength: 4)
+                Text(nextText(ctx.date))
+                    .font(.caption2)
+                    .monospacedDigit()
+                    .foregroundStyle(.white.opacity(0.82))
+                    .lineLimit(1)
+                Button {
+                    stopAuto()
+                } label: {
+                    Image(systemName: "stop.circle.fill")
+                        .font(.system(size: 17))
+                }
+                .accessibilityLabel("停止自动截图")
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(Capsule().fill(autoSave ? Color.green.opacity(0.26) : Color.white.opacity(0.14)))
+            .overlay(Capsule().stroke(Color.white.opacity(0.16), lineWidth: 0.5))
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
+        }
+    }
+
+    private func nextText(_ now: Date) -> String {
+        if busy { return "截取中…" }
+        guard let t = autoNextAt else { return "准备中…" }
+        return "下一张 \(max(0, Int(ceil(t.timeIntervalSince(now)))))s"
+    }
+
+    private func startAuto(_ seconds: Int) {
+        autoSeconds = seconds
+        autoCount = 0
+        autoFailStreak = 0
+        autoNextAt = nil
+        autoSession += 1           // 重启连拍循环（旧 task 自动 cancel）
+        flash("自动截图已开启：每 \(seconds) 秒一张")
+    }
+
+    private func stopAuto() {
+        guard autoSeconds > 0 else { return }
+        autoSeconds = 0
+        autoNextAt = nil
+        autoSession += 1           // 让在途的连拍循环立刻退出
+    }
+
+    /// .task(id:) 驱动：id 变化或视图消失会自动 cancel 上一轮，不留后台定时器
+    private func autoRun() async {
+        guard autoSeconds > 0 else { return }
+        let seconds = autoSeconds
+        while !Task.isCancelled, autoSeconds == seconds {
+            let began = Date()
+            await autoCaptureOnce(seconds: seconds)
+            guard !Task.isCancelled, autoSeconds == seconds else { break }
+            // 扣掉本次截图耗时，保证「每 N 秒一张」而不是「每 N+耗时 秒一张」
+            let wait = max(0.3, Double(seconds) - Date().timeIntervalSince(began))
+            autoNextAt = Date().addingTimeInterval(wait)
+            try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+        }
+    }
+
+    private func autoCaptureOnce(seconds: Int) async {
+        guard autoSeconds == seconds, !busy else { return }
+        busy = true
+        defer { busy = false }
+        do {
+            let r = try await capture()
+            guard autoSeconds == seconds else { return }   // 期间已停止：丢弃这一张
+            refreshed = r          // 不 resetZoom，保留用户当前放大 / 拖动位置
+            autoCount += 1
+            autoFailStreak = 0
+            if autoSave {
+                _ = try? await PhotoSaver.saveToAlbum(fileAt: r.fileURL)
+            }
+        } catch {
+            guard autoSeconds == seconds else { return }
+            autoFailStreak += 1
+            if autoFailStreak >= 3 {
+                flash("自动截图已停止：连续 3 次截取失败")
+                stopAuto()
+            } else {
+                flash("自动截取失败（\(autoFailStreak)/3）：\(TransferTabView.errorText(error))")
             }
         }
     }
