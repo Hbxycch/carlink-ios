@@ -468,11 +468,27 @@ struct DeviceStatusView: View {
 
 // MARK: - 已安装应用列表
 
+private struct AppTarget {
+    let packageName: String
+    let name: String
+}
+
 struct DeviceAppsView: View {
     /// 原始 /api/device/apps 字典
     let apps: [String: Any]?
 
+    @EnvironmentObject var conn: ConnectionStore
+
     @State private var query = ""
+    /// 正在执行操作的包名（同一时刻只允许一个，防止连点把 adbd 打满）
+    @State private var busyPackage: String?
+    @State private var toast: String?
+    @State private var showStopConfirm = false
+    @State private var stopTarget = AppTarget(packageName: "", name: "")
+
+    /// 车机端 v1.1.31+ 才有 /api/device/app/control
+    private var supported: Bool { conn.carInfo?.appControl == true }
+    private let selfPackage = "com.zood.carlink"
 
     private var allApps: [[String: Any]] {
         (apps?["apps"] as? [[String: Any]]) ?? []
@@ -499,13 +515,38 @@ struct DeviceAppsView: View {
             } header: {
                 Text("用户应用 \(allApps.count) 个 · 系统应用 \(sysCount) 个")
             } footer: {
-                Text("系统应用数量较多，只统计不列明细。")
+                Text(supported
+                     ? "启动通过车机本地 ADB 回环拉起应用主界面；关闭为强制停止（force-stop），会中断该应用正在运行的任务。CarLink 自身不允许关闭，以免中断连接。系统应用只统计不列明细。"
+                     : "需要车机端 v1.1.31 及以上版本才支持启动 / 关闭应用，请先升级车机端。系统应用只统计不列明细。")
             }
         }
         .listStyle(.insetGrouped)
         .searchable(text: $query, prompt: "搜索名称或包名")
         .navigationTitle("已安装应用")
         .navigationBarTitleDisplayMode(.inline)
+        .overlay(alignment: .bottom) {
+            if let t = toast {
+                Text(t)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .background(Capsule().fill(Color.black.opacity(0.78)))
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 22)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.18), value: toast)
+        .alert("关闭应用？", isPresented: $showStopConfirm) {
+            Button("取消", role: .cancel) {}
+            Button("关闭", role: .destructive) {
+                perform("stop", target: stopTarget)
+            }
+        } message: {
+            Text("将强制停止「\(stopTarget.name)」，它正在运行的任务会被中断。")
+        }
     }
 
     private var sysCount: Int {
@@ -514,18 +555,29 @@ struct DeviceAppsView: View {
 
     @ViewBuilder
     private func appRow(_ a: [String: Any]) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        let pkg = (a["package"] as? String) ?? ""
+        let name = (a["name"] as? String) ?? pkg
+        let isSelf = pkg == selfPackage
+        VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 8) {
                 Image(systemName: "app")
                     .foregroundStyle(CL.blue)
-                Text((a["name"] as? String) ?? "")
+                Text(name)
                     .font(.subheadline.weight(.medium))
+                if isSelf {
+                    Text("当前服务")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.green)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(Color.green.opacity(0.14)))
+                }
                 Spacer()
                 Text((a["versionName"] as? String) ?? "")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Text((a["package"] as? String) ?? "")
+            Text(pkg)
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
             HStack(spacing: 10) {
@@ -544,7 +596,62 @@ struct DeviceAppsView: View {
             }
             .font(.caption2)
             .foregroundStyle(.secondary)
+
+            if supported {
+                HStack(spacing: 16) {
+                    Button {
+                        perform("start", target: AppTarget(packageName: pkg, name: name))
+                    } label: {
+                        Label("启动", systemImage: "play.fill")
+                    }
+                    Button(role: .destructive) {
+                        stopTarget = AppTarget(packageName: pkg, name: name)
+                        showStopConfirm = true
+                    } label: {
+                        Label("关闭", systemImage: "stop.fill")
+                    }
+                    .disabled(isSelf)
+                    if busyPackage == pkg {
+                        ProgressView().scaleEffect(0.75)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .font(.caption.weight(.medium))
+                .buttonStyle(.borderless)
+                .disabled(busyPackage != nil)
+                .padding(.top, 3)
+            }
         }
         .padding(.vertical, 2)
+    }
+
+    private func perform(_ action: String, target: AppTarget) {
+        guard let api = conn.client else {
+            flash("未连接车机")
+            return
+        }
+        guard busyPackage == nil else { return }
+        busyPackage = target.packageName
+        Task {
+            defer { busyPackage = nil }
+            do {
+                let r = try await api.controlApp(packageName: target.packageName, action: action)
+                if let ok = r["ok"] as? Bool, ok {
+                    flash((r["message"] as? String)
+                          ?? (action == "start" ? "已启动 \(target.name)" : "已关闭 \(target.name)"))
+                } else {
+                    flash((r["error"] as? String) ?? (r["message"] as? String) ?? "操作失败")
+                }
+            } catch {
+                flash((error as? APIError)?.message ?? error.localizedDescription)
+            }
+        }
+    }
+
+    private func flash(_ text: String) {
+        toast = text
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) {
+            if toast == text { toast = nil }
+        }
     }
 }

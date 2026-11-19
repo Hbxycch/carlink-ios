@@ -339,6 +339,26 @@ final class APIClient {
         try Self.checkHTTP(resp, body: data)
     }
 
+    /// 远程启动 / 关闭车机上的应用（车机端 v1.1.31+）。
+    /// 车机端走本地 root adbd 回环执行 monkey / am force-stop，返回 ok + message + output。
+    func controlApp(packageName: String, action: String) async throws -> [String: Any] {
+        var req = URLRequest(url: url("/api/device/app/control"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.timeoutInterval = 20
+        req.httpBody = try JSONSerialization.data(withJSONObject:
+                                                    ["package": packageName, "action": action])
+        let (data, resp) = try await session.data(for: req)
+        if let http = resp as? HTTPURLResponse, http.statusCode == 404 {
+            throw APIError("车机端不支持应用启动/关闭，请先升级到 v1.1.31")
+        }
+        try Self.checkHTTP(resp, body: data)
+        guard let d = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw APIError("响应格式错误")
+        }
+        return d
+    }
+
     /// 远程修改车机配置（键名与车机端 /api/config 一致，
     /// 如 stream_front_on / stream_front_url；改完车机会自动重载推流）
     func updateConfig(_ body: [String: Any]) async throws {
