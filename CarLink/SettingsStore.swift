@@ -92,6 +92,8 @@ final class SettingsStore: ObservableObject {
     @AppStorage("monitorHlsTemplate") var monitorHlsTemplate = "{base}/hls/{key}/{key}_live.m3u8"
     /// 快照流刷新频率（车机端上限约 1fps）
     @AppStorage("monitorSnapshotFps") var monitorSnapshotFps = 1
+    /// 进入车机监控时默认打开几路画面（1 / 2 / 3 / 4，默认 4 路 2×2）
+    @AppStorage("monitorDefaultLayout") var monitorDefaultLayout = 4
 
     /// 网络类型监测（供下载调度订阅）
     @Published var isWiFi = true

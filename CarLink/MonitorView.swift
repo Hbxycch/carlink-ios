@@ -17,6 +17,7 @@ struct MonitorView: View {
     @EnvironmentObject var settings: SettingsStore
 
     @State private var layout = 4                 // 1 / 2 / 3 / 4
+    @State private var layoutLoaded = false       // 是否已套用「默认打开画面」
     @State private var patrol = false
     @State private var current = "front"
     @State private var streams: [String: StreamInfo] = [:]
@@ -69,6 +70,19 @@ struct MonitorView: View {
                                   source: settings.monitorSource,
                                   onClose: { fullCam = nil })
             }
+        }
+        .onAppear {
+            // 只在本次页面生命周期首次出现时套用「默认打开画面」；
+            // 之后用户手动切档位不会被 sheet / 全屏返回触发的 onAppear 覆盖。
+            guard !layoutLoaded else { return }
+            layoutLoaded = true
+            let v = settings.monitorDefaultLayout
+            layout = (1...4).contains(v) ? v : 4
+        }
+        .onChange(of: settings.monitorDefaultLayout) { v in
+            // 在页面内「监看设置」改了默认值就立即跟随，避免点了没反应；
+            // 从设置页改动时，下次进入监控页由 onAppear 套用。
+            layout = (1...4).contains(v) ? v : 4
         }
         .task { await loadStreams() }
         .onReceive(statusTimer) { _ in
@@ -829,6 +843,19 @@ struct MonitorSettingsSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    Picker("默认打开画面", selection: $settings.monitorDefaultLayout) {
+                        Text("1 路 · 单画面").tag(1)
+                        Text("2 路 · 竖排两行").tag(2)
+                        Text("3 路 · 竖排三行").tag(3)
+                        Text("4 路 · 2×2（含预留）").tag(4)
+                    }
+                } header: {
+                    Text("布局")
+                } footer: {
+                    Text("每次进入车机监控时按所选路数显示；在这里修改会立即应用到当前页面。页面内仍可用顶部 1/2/3/4 临时切换，下次进入恢复默认。")
+                }
+
                 Section {
                     Picker("画面来源", selection: $settings.monitorSource) {
                         ForEach(MonitorSource.allCases) { s in

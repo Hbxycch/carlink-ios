@@ -164,6 +164,13 @@ struct SettingsView: View {
             .disabled(!conn.isConnected)
             .foregroundStyle(conn.isConnected ? .primary : .secondary)
 
+            Picker("默认打开画面", selection: $settings.monitorDefaultLayout) {
+                Text("1 路 · 单画面").tag(1)
+                Text("2 路 · 竖排两行").tag(2)
+                Text("3 路 · 竖排三行").tag(3)
+                Text("4 路 · 2×2（含预留）").tag(4)
+            }
+
             Picker("画面来源", selection: $settings.monitorSource) {
                 ForEach(MonitorSource.allCases) { s in
                     Text(s.title).tag(s)
@@ -189,7 +196,7 @@ struct SettingsView: View {
         } header: {
             Text("车机监控")
         } footer: {
-            Text("\(settings.monitorSource.detail)。HLS 走 easyNVR（连续视频、画质好，但手机必须能访问它）；快照流由车机每秒解一帧 640×360 JPEG，只要连上车机就能看，需车机端 v1.1.28+。模板占位符：{base} 服务地址、{key} 推流流名、{host} 车机推流主机。")
+            Text("默认打开画面决定每次进入车机监控时的初始路数，页面内仍可用顶部 1/2/3/4 临时切换，退出后下次进入恢复默认。\(settings.monitorSource.detail)。HLS 走 easyNVR（连续视频、画质好，但手机必须能访问它）；快照流由车机每秒解一帧 640×360 JPEG，只要连上车机就能看，需车机端 v1.1.28+。模板占位符：{base} 服务地址、{key} 推流流名、{host} 车机推流主机。")
         }
     }
 

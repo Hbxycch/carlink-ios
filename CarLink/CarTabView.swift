@@ -29,6 +29,7 @@ struct CarTabView: View {
 struct CarHomeView: View {
     @EnvironmentObject var conn: ConnectionStore
     @EnvironmentObject var nav: AppNav
+    @EnvironmentObject var settings: SettingsStore
 
     private var dimmed: Bool { conn.health == .offline }
 
@@ -306,7 +307,7 @@ struct CarHomeView: View {
                 HStack(spacing: 8) {
                     Label("车机监控", systemImage: "video.fill")
                     Spacer(minLength: 0)
-                    Text(conn.isOnline ? "三路画面" : "离线")
+                    Text(conn.isOnline ? "\(settings.monitorDefaultLayout) 路画面" : "离线")
                         .font(.system(size: 10.5))
                         .foregroundStyle(conn.isOnline ? CL.ink2 : CL.red)
                 }
