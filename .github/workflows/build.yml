@@ -57,16 +57,25 @@ jobs:
 
       - name: Package unsigned IPA
         run: |
+          set -e
+          APP=dd/Build/Products/Release-iphoneos/CarLink.app
+          # 从构建产物读版本号，让 Artifact 名 / IPA 文件名都自带版本，避免多次构建同名分不清
+          VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Info.plist")
+          BUILD=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$APP/Info.plist")
+          IPA="CarLink-v${VER}-${BUILD}-unsigned.ipa"
+          echo "APP_VER=$VER" >> "$GITHUB_ENV"
+          echo "APP_BUILD=$BUILD" >> "$GITHUB_ENV"
+          echo "IPA_NAME=$IPA" >> "$GITHUB_ENV"
           mkdir -p Payload
-          cp -R dd/Build/Products/Release-iphoneos/CarLink.app Payload/
-          zip -qry CarLink-unsigned.ipa Payload
-          ls -la CarLink-unsigned.ipa
+          cp -R "$APP" Payload/
+          zip -qry "$IPA" Payload
+          ls -la "$IPA"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: CarLink-unsigned-ipa
-          path: CarLink-unsigned.ipa
+          name: CarLink-v${{ env.APP_VER }}-${{ env.APP_BUILD }}-unsigned-ipa
+          path: ${{ env.IPA_NAME }}
           retention-days: 90
 
       # 构建失败：把错误日志尾部提交回 main（ci-last-error.log），便于本地排查
@@ -97,16 +106,20 @@ jobs:
       - name: Download IPA artifact
         uses: actions/download-artifact@v4
         with:
-          name: CarLink-unsigned-ipa
+          # Artifact 名现在带版本号，不再写死；按目录整体下载后用文件名匹配
+          path: artifacts
 
       - name: Publish to dist branch
         run: |
           set -e
           exec > >(tee publish.log) 2>&1
-          unzip -q CarLink-unsigned.ipa -d ex
+          IPA_SRC=$(find artifacts -type f -name 'CarLink-v*-unsigned.ipa' | head -1)
+          if [ -z "$IPA_SRC" ]; then echo "未找到 IPA artifact"; exit 1; fi
+          echo "IPA_SRC=$IPA_SRC"
+          unzip -q "$IPA_SRC" -d ex
           VER=$(python3 -c "import plistlib; print(plistlib.load(open('ex/Payload/CarLink.app/Info.plist','rb'))['CFBundleShortVersionString'])")
           BUILD=$(python3 -c "import plistlib; print(plistlib.load(open('ex/Payload/CarLink.app/Info.plist','rb'))['CFBundleVersion'])")
-          cp CarLink-unsigned.ipa "CarLink-v${VER}-unsigned.ipa"
+          cp "$IPA_SRC" "CarLink-v${VER}-unsigned.ipa"
           SIZE=$(stat -c%s "CarLink-v${VER}-unsigned.ipa")
           MD5=$(md5sum "CarLink-v${VER}-unsigned.ipa" | cut -d' ' -f1)
           CHANGELOG=$(git log -1 --pretty=%s)
