@@ -12,7 +12,7 @@ private enum ScreenPhase {
     case failed(String)
 }
 
-private struct ScreenShotResult {
+private struct ScreenShotResult: Identifiable {
     let image: UIImage
     /// adb = 现场截屏；cache = 车机 ADB 不可用时回退最近一张
     let source: String
@@ -24,6 +24,7 @@ private struct ScreenShotResult {
     let at: Date
     let fileURL: URL
 
+    var id: URL { fileURL }
     var isLive: Bool { source == "adb" }
 }
 
@@ -40,6 +41,8 @@ struct TransferTabView: View {
     /// 截图状态机：idle → capturing(开始时间) → done / failed
     @State private var screenPhase: ScreenPhase = .idle
     @State private var screenToast: String?
+    /// 全屏查看的截图（点图片进入）
+    @State private var previewShot: ScreenShotResult?
 
     var body: some View {
         NavigationStack {
@@ -64,6 +67,9 @@ struct TransferTabView: View {
                 }
             }
             .animation(.easeInOut(duration: 0.18), value: screenToast)
+            .fullScreenCover(item: $previewShot) { shot in
+                ScreenShotFullscreen(shot: shot)
+            }
         }
     }
 
@@ -112,6 +118,16 @@ struct TransferTabView: View {
                     .padding(.vertical, 4)
                 case .done(let r):
                     screenResult(r)
+                    // 单独成一格：与上一排按钮之间由 List 原生行距隔开，避免误触
+                    NavigationLink {
+                        CarFilesBrowserView(initialPath: screenDir)
+                    } label: {
+                        HStack {
+                            Label("查看车机全部截图", systemImage: "photo.on.rectangle")
+                            Spacer()
+                            Text("CarCap").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
                 case .failed(let msg):
                     VStack(alignment: .leading, spacing: 8) {
                         Label(msg, systemImage: "exclamationmark.triangle")
@@ -141,12 +157,30 @@ struct TransferTabView: View {
     @ViewBuilder
     private func screenResult(_ r: ScreenShotResult) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Image(uiImage: r.image)
-                .resizable()
-                .scaledToFit()
-                .frame(maxWidth: .infinity, maxHeight: 210)
-                .background(Color.black)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+            Button {
+                previewShot = r
+            } label: {
+                Image(uiImage: r.image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: 210)
+                    .background(Color.black)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .overlay(alignment: .bottomTrailing) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            Text("全屏")
+                        }
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Color.black.opacity(0.55)))
+                        .padding(8)
+                    }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("查看车机屏幕大图")
 
             HStack(spacing: 6) {
                 Text("\(r.width)×\(r.height) · \(Fmt.bytes(r.bytes)) · \(Self.timeText.string(from: r.at))")
@@ -193,17 +227,6 @@ struct TransferTabView: View {
                 .font(.subheadline)
             }
             .buttonStyle(.borderless)
-
-            NavigationLink {
-                CarFilesBrowserView(initialPath: screenDir)
-            } label: {
-                HStack {
-                    Label("查看车机全部截图", systemImage: "photo.on.rectangle")
-                    Spacer()
-                    Text("CarCap").font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            .font(.subheadline)
         }
         .padding(.vertical, 4)
     }
@@ -537,6 +560,204 @@ struct DownloadRow: View {
         case .failed: return .orange
         case .done: return .green
         default: return .secondary
+        }
+    }
+}
+
+// MARK: - 车机截图全屏预览
+//
+// 传输 Tab 里点截图缩略图直接进这里：自动转横屏、整屏看细节，
+// 支持双击 / 捏合放大、放大后拖动，单击收起工具栏。退出恢复竖屏。
+
+private struct ScreenShotFullscreen: View {
+    let shot: ScreenShotResult
+
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var scale: CGFloat = 1
+    @State private var baseScale: CGFloat = 1
+    @State private var offset: CGSize = .zero
+    @State private var baseOffset: CGSize = .zero
+    @State private var showChrome = true
+    @State private var toast: String?
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+
+            Image(uiImage: shot.image)
+                .resizable()
+                .scaledToFit()
+                .scaleEffect(scale)
+                .offset(offset)
+                .gesture(magnify)
+                .simultaneousGesture(pan)
+                .onTapGesture(count: 2) { toggleZoom() }
+                .onTapGesture { toggleChrome() }
+
+            if showChrome { chrome }
+        }
+        .statusBarHidden(true)
+        .overlay(alignment: .bottom) {
+            if let toast {
+                Text(toast)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(Capsule().fill(Color.black.opacity(0.74)))
+                    .padding(.bottom, 74)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.18), value: toast)
+        .onAppear {
+            // 车机截图多为 16:9 宽幅，全屏必须横过来才看得清
+            DispatchQueue.main.async { OrientationLock.shared.set(.landscape) }
+        }
+        .onDisappear {
+            OrientationLock.shared.set(.portrait)
+        }
+    }
+
+    private var subtitle: String {
+        var s = "\(shot.width)×\(shot.height) · \(Fmt.bytes(shot.bytes)) · "
+            + TransferTabView.timeText.string(from: shot.at)
+        s += shot.isLive ? " · 现场截屏" : " · 最近一张"
+        return s
+    }
+
+    private var chrome: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 32, height: 32)
+                        .background(Circle().fill(Color.white.opacity(0.18)))
+                }
+                .accessibilityLabel("关闭")
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("车机屏幕")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+                    Text(subtitle)
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.66))
+                }
+
+                Spacer(minLength: 0)
+
+                Button {
+                    toggleZoom()
+                } label: {
+                    Image(systemName: scale > 1.01
+                          ? "arrow.down.right.and.arrow.up.left"
+                          : "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 32, height: 32)
+                        .background(Circle().fill(Color.white.opacity(0.18)))
+                }
+                .accessibilityLabel(scale > 1.01 ? "还原大小" : "放大")
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 6)
+
+            Spacer(minLength: 0)
+
+            HStack(spacing: 26) {
+                Button {
+                    save()
+                } label: {
+                    Label("保存到相册", systemImage: "square.and.arrow.down")
+                }
+                ShareLink(item: shot.fileURL) {
+                    Label("分享", systemImage: "square.and.arrow.up")
+                }
+            }
+            .font(.footnote.weight(.medium))
+            .foregroundStyle(.white)
+            .tint(.white)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 9)
+            .background(Capsule().fill(Color.black.opacity(0.6)))
+            .overlay(Capsule().stroke(Color.white.opacity(0.14), lineWidth: 0.5))
+            .padding(.bottom, 10)
+        }
+    }
+
+    // MARK: 手势
+
+    private var magnify: some Gesture {
+        MagnificationGesture()
+            .onChanged { v in
+                scale = min(max(baseScale * v, 1), 5)
+            }
+            .onEnded { _ in
+                if scale <= 1.02 {
+                    withAnimation(.easeOut(duration: 0.2)) { resetZoom() }
+                } else {
+                    baseScale = scale
+                    baseOffset = offset
+                }
+            }
+    }
+
+    private var pan: some Gesture {
+        DragGesture()
+            .onChanged { v in
+                guard scale > 1.01 else { return }
+                let limit = 180 * (scale - 1)
+                let x = baseOffset.width + v.translation.width
+                let y = baseOffset.height + v.translation.height
+                offset = CGSize(width: min(max(x, -limit), limit),
+                                height: min(max(y, -limit), limit))
+            }
+            .onEnded { _ in
+                guard scale > 1.01 else { return }
+                baseOffset = offset
+            }
+    }
+
+    private func toggleZoom() {
+        withAnimation(.easeInOut(duration: 0.22)) {
+            if scale > 1.01 {
+                resetZoom()
+            } else {
+                scale = 2.4
+                baseScale = 2.4
+            }
+        }
+    }
+
+    private func resetZoom() {
+        scale = 1
+        baseScale = 1
+        offset = .zero
+        baseOffset = .zero
+    }
+
+    private func toggleChrome() {
+        withAnimation(.easeInOut(duration: 0.16)) { showChrome.toggle() }
+    }
+
+    private func save() {
+        Task {
+            do {
+                _ = try await PhotoSaver.saveToAlbum(fileAt: shot.fileURL)
+                toast = "已保存到相册"
+            } catch {
+                toast = "保存失败：\(error.localizedDescription)"
+            }
+            let text = toast
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.9) {
+                if toast == text { toast = nil }
+            }
         }
     }
 }
