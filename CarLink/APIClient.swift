@@ -359,6 +359,37 @@ final class APIClient {
         return d
     }
 
+    /// 查询车机本地 adbd 回环状态（在线 / 端口 / 上次耗时 / 错误）
+    func adbStatus() async throws -> [String: Any] {
+        let (data, resp) = try await session.data(for: URLRequest(url: url("/api/device/adb/status")))
+        if let http = resp as? HTTPURLResponse, http.statusCode == 404 {
+            throw APIError("车机端不支持 ADB 工具，请先升级到 v1.1.32")
+        }
+        try Self.checkHTTP(resp, body: data)
+        guard let d = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw APIError("响应格式错误")
+        }
+        return (d["adb"] as? [String: Any]) ?? d
+    }
+
+    /// 执行一条自定义 ADB shell 命令（车机端 v1.1.32+，返回 ok / output / ms）
+    func runAdbShell(command: String) async throws -> [String: Any] {
+        var req = URLRequest(url: url("/api/device/shell"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.timeoutInterval = 20
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["command": command])
+        let (data, resp) = try await session.data(for: req)
+        if let http = resp as? HTTPURLResponse, http.statusCode == 404 {
+            throw APIError("车机端不支持 ADB 快捷指令，请先升级到 v1.1.32")
+        }
+        try Self.checkHTTP(resp, body: data)
+        guard let d = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw APIError("响应格式错误")
+        }
+        return d
+    }
+
     /// 远程修改车机配置（键名与车机端 /api/config 一致，
     /// 如 stream_front_on / stream_front_url；改完车机会自动重载推流）
     func updateConfig(_ body: [String: Any]) async throws {

@@ -20,6 +20,7 @@ struct SettingsView: View {
             List {
                 connectionSection
                 deviceControlSection
+                adbSection
                 monitorSection
                 downloadSection
                 playbackSection
@@ -149,6 +150,24 @@ struct SettingsView: View {
                 rebootMessage = "重启失败：\((error as? APIError)?.message ?? error.localizedDescription)"
             }
             showRebootResult = true
+        }
+    }
+
+    // MARK: ADB 工具（通用 shell 指令）
+
+    private var adbSection: some View {
+        Section {
+            NavigationLink {
+                AdbShortcutsView()
+            } label: {
+                Label("ADB 快捷指令", systemImage: "chevron.left.forwardslash.chevron.right")
+            }
+            .disabled(!conn.isConnected)
+            .foregroundStyle(conn.isConnected ? .primary : .secondary)
+        } header: {
+            Text("ADB 工具")
+        } footer: {
+            Text("在车机上执行常用 ADB shell 指令，支持自定义增删改、排序与结果回显。需要车机端 v1.1.32 及以上，且无线 ADB 调试保持开启；高危指令执行前会二次确认。")
         }
     }
 
