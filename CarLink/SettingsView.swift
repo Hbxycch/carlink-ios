@@ -164,10 +164,18 @@ struct SettingsView: View {
             }
             .disabled(!conn.isConnected)
             .foregroundStyle(conn.isConnected ? .primary : .secondary)
+
+            NavigationLink {
+                AdbInstallView()
+            } label: {
+                Label("安装应用", systemImage: "square.and.arrow.down")
+            }
+            .disabled(!conn.isConnected)
+            .foregroundStyle(conn.isConnected ? .primary : .secondary)
         } header: {
             Text("ADB 工具")
         } footer: {
-            Text("在车机上执行常用 ADB shell 指令，支持自定义增删改、排序与结果回显。需要车机端 v1.1.32 及以上，且无线 ADB 调试保持开启；高危指令执行前会二次确认。")
+            Text("在车机上执行常用 ADB shell 指令，或按链接 / 本机 APK 文件远程安装应用并直接打开。快捷指令需车机端 v1.1.32+、安装应用需 v1.1.33+，且无线 ADB 调试保持开启；高危指令执行前会二次确认。")
         }
     }
 

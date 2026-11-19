@@ -144,6 +144,8 @@ struct CarInfo: Codable {
     let appControl: Bool?
     /// 车机是否支持通用 ADB shell 指令（v1.1.32+）
     let adbShell: Bool?
+    /// 车机是否支持远程安装 APK（v1.1.33+）
+    let appInstall: Bool?
 
     /// 容错解码：老版本车机缺字段（如 port / version）也允许连上，
     /// 避免浏览器能打开、App 却因 JSON 解析失败连不上的情况
@@ -165,6 +167,7 @@ struct CarInfo: Codable {
         deviceControl = try? c.decodeIfPresent(Bool.self, forKey: .deviceControl)
         appControl = try? c.decodeIfPresent(Bool.self, forKey: .appControl)
         adbShell = try? c.decodeIfPresent(Bool.self, forKey: .adbShell)
+        appInstall = try? c.decodeIfPresent(Bool.self, forKey: .appInstall)
     }
 
     /// 机型展示："ROCO K706"（无 model 时退回 brand）

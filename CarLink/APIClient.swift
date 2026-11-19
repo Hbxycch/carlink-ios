@@ -390,6 +390,83 @@ final class APIClient {
         return d
     }
 
+    // MARK: - ADB 安装应用（车机端 v1.1.33+）
+
+    /// 手机先按链接把 APK 下载到临时文件，再走上传安装。
+    /// 好处：不要求车机自身能访问外网，带签名 / 时效的下载地址也能用。
+    func downloadApkToTemp(_ link: String) async throws -> URL {
+        guard let u = URL(string: link),
+              let scheme = u.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
+            throw APIError("请输入 http/https 开头的有效 APK 地址")
+        }
+        var req = URLRequest(url: u)
+        req.timeoutInterval = 180
+        let (tmp, resp) = try await session.download(for: req)
+        try Self.checkHTTP(resp)
+        let dst = FileManager.default.temporaryDirectory
+            .appendingPathComponent("carlink-apk-\(Int(Date().timeIntervalSince1970)).apk")
+        try? FileManager.default.removeItem(at: dst)
+        try FileManager.default.copyItem(at: tmp, to: dst)
+        return dst
+    }
+
+    /// 让车机自己按 URL 下载 APK 并安装（需车机可访问该地址）
+    func installApkFromURL(_ link: String) async throws -> ApkInstallResult {
+        var req = URLRequest(url: url("/api/device/app/install/url"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.timeoutInterval = 300
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["url": link])
+        let (data, resp) = try await session.data(for: req)
+        if let http = resp as? HTTPURLResponse, http.statusCode == 404 {
+            throw APIError("车机端不支持 ADB 安装应用，请先升级到 v1.1.33")
+        }
+        try Self.checkHTTP(resp, body: data)
+        return try Self.parseInstall(data)
+    }
+
+    /// 上传本机 APK 到车机并安装。progress 回调 0...1（上传阶段）。
+    /// body 是二进制，不能用 URLRequest.httpBody + data(for:) 的通用封装，
+    /// 走 uploadTask(fromFile:) + delegate 才有进度、也不会把整个 APK 读进内存。
+    func installApk(fileAt: URL, progress: @escaping (Double) -> Void) async throws -> ApkInstallResult {
+        var comps = URLComponents(string: baseURLText + "/api/device/app/install")!
+        comps.queryItems = [URLQueryItem(name: "name", value: fileAt.lastPathComponent)]
+        var req = URLRequest(url: comps.url!)
+        req.httpMethod = "POST"
+        req.setValue("application/vnd.android.package-archive", forHTTPHeaderField: "Content-Type")
+        req.timeoutInterval = 300
+
+        let delegate = UploadProgressDelegate(progress)
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.timeoutIntervalForRequest = 300
+        cfg.timeoutIntervalForResource = 600
+        let uploadSession = URLSession(configuration: cfg, delegate: delegate, delegateQueue: nil)
+        defer { uploadSession.finishTasksAndInvalidate() }
+
+        let pair: (Data, URLResponse) = try await withCheckedThrowingContinuation {
+            (cont: CheckedContinuation<(Data, URLResponse), Error>) in
+            let task = uploadSession.uploadTask(with: req, fromFile: fileAt) { d, r, e in
+                if let e = e { cont.resume(throwing: e) }
+                else if let r = r { cont.resume(returning: (d ?? Data(), r)) }
+                else { cont.resume(throwing: APIError("上传无响应")) }
+            }
+            task.resume()
+        }
+        let (data, resp) = pair
+        if let http = resp as? HTTPURLResponse, http.statusCode == 404 {
+            throw APIError("车机端不支持 ADB 安装应用，请先升级到 v1.1.33")
+        }
+        try Self.checkHTTP(resp, body: data)
+        return try Self.parseInstall(data)
+    }
+
+    private static func parseInstall(_ data: Data) throws -> ApkInstallResult {
+        guard let d = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw APIError("响应格式错误：" + preview(data))
+        }
+        return ApkInstallResult(d)
+    }
+
     /// 远程修改车机配置（键名与车机端 /api/config 一致，
     /// 如 stream_front_on / stream_front_url；改完车机会自动重载推流）
     func updateConfig(_ body: [String: Any]) async throws {
@@ -399,5 +476,49 @@ final class APIClient {
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, resp) = try await session.data(for: req)
         try Self.checkHTTP(resp, body: data)
+    }
+}
+
+// MARK: - APK 安装结果
+
+struct ApkInstallResult {
+    let ok: Bool
+    let package: String
+    let versionName: String
+    let versionCode: Int
+    let size: Int64
+    let ms: Int
+    let output: String
+    let name: String
+    let message: String
+
+    init(_ d: [String: Any]) {
+        ok = d["ok"] as? Bool == true
+        package = d["package"] as? String ?? ""
+        versionName = d["versionName"] as? String ?? ""
+        versionCode = (d["versionCode"] as? NSNumber)?.intValue ?? 0
+        size = (d["size"] as? NSNumber)?.int64Value ?? 0
+        ms = (d["ms"] as? NSNumber)?.intValue ?? 0
+        output = d["output"] as? String ?? ""
+        name = d["name"] as? String ?? ""
+        message = d["message"] as? String ?? ""
+    }
+}
+
+/// 上传进度回调（URLSession delegate 在后台队列触发，调用方自行切主线程）
+private final class UploadProgressDelegate: NSObject, URLSessionTaskDelegate {
+    private let onProgress: (Double) -> Void
+
+    init(_ onProgress: @escaping (Double) -> Void) {
+        self.onProgress = onProgress
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    didSendBodyData bytesSent: Int64,
+                    totalBytesSent: Int64,
+                    totalBytesExpectedToSend: Int64) {
+        guard totalBytesExpectedToSend > 0 else { return }
+        let p = min(1, Double(totalBytesSent) / Double(totalBytesExpectedToSend))
+        DispatchQueue.main.async { self.onProgress(p) }
     }
 }
