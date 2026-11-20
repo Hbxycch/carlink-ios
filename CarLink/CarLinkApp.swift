@@ -37,6 +37,8 @@ struct CarLinkApp: App {
         let up = UploadManager()
         up.connection = connection
         _uploads = StateObject(wrappedValue: up)
+        // 清理旧版本自动截图在 tmp 里遗留的大量临时 PNG（后台执行，不阻塞启动）
+        ScreenShotTempStore.cleanupOnLaunch()
     }
 
     var body: some Scene {

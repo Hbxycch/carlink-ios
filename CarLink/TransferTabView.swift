@@ -28,6 +28,78 @@ private struct ScreenShotResult: Identifiable {
     var isLive: Bool { source == "adb" }
 }
 
+// MARK: - 截图临时文件管理
+//
+// 自动连拍每 2~10 秒产生一张约 140KB 的 PNG，早期实现按秒时间戳命名且从不清理，
+// 连拍一天就能堆 4~6GB。这里统一放到 tmp/carlink-shots/ 子目录并限制保留张数：
+//   · 每次写入后 trim 到 keepCount 张（连拍期间目录恒定约 4 张 / 600KB）；
+//   · 停止连拍 / 退出全屏时再收紧到只留当前展示那张，供结果卡继续分享、存相册；
+//   · App 启动时清掉旧版本散落在 tmp 根目录的 carlink-screen-*.png 遗留文件。
+// 用「保留窗口」而不是写完立刻删，是为了让异步的 ShareLink / 保存到相册能读完文件。
+final class ScreenShotTempStore {
+    static let shared = ScreenShotTempStore()
+
+    /// App 启动时调用：触发单例初始化（清掉旧版本遗留文件）并收紧目录。
+    /// 旧版本可能已堆积上万个 PNG，放到后台线程，避免同步删除卡住启动。
+    static func cleanupOnLaunch() {
+        DispatchQueue.global(qos: .utility).async {
+            _ = shared
+            shared.trim(keeping: [], keep: 4)
+        }
+    }
+
+    private let dir: URL
+    private let fm = FileManager.default
+    /// 常规保留上限：当前展示 + 传输页结果卡 + 分享/相册读取缓冲
+    private let keepCount = 4
+
+    private init() {
+        let d = fm.temporaryDirectory.appendingPathComponent("carlink-shots", isDirectory: true)
+        try? fm.createDirectory(at: d, withIntermediateDirectories: true)
+        dir = d
+        // 旧版本遗留：tmp 根目录里按秒命名的 carlink-screen-<时间戳>.png
+        let legacy = (try? fm.contentsOfDirectory(at: fm.temporaryDirectory,
+                                                  includingPropertiesForKeys: nil,
+                                                  options: .skipsHiddenFiles)) ?? []
+        for u in legacy {
+            guard u.lastPathComponent.hasPrefix("carlink-screen-"),
+                  u.pathExtension.lowercased() == "png" else { continue }
+            try? fm.removeItem(at: u)
+        }
+    }
+
+    /// 写入一张新截图并返回 URL；写完后立刻按上限清理旧文件
+    func write(_ data: Data) throws -> URL {
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("shot-\(UUID().uuidString).png")
+        // atomic：先写临时再 rename，避免连拍时 ShareLink / 相册读到写了一半的文件
+        try data.write(to: url, options: .atomic)
+        trim()
+        return url
+    }
+
+    /// 只保留 protected 指定文件 + 最新 keep 张，其余删除
+    func trim(keeping protected: [URL] = [], keep: Int? = nil) {
+        let limit = keep ?? keepCount
+        guard let files = try? fm.contentsOfDirectory(
+            at: dir,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: .skipsHiddenFiles) else { return }
+
+        let dated: [(URL, Date)] = files.map { u in
+            let values = try? u.resourceValues(forKeys: [.contentModificationDateKey])
+            let d = values?.contentModificationDate ?? Date.distantPast
+            return (u, d)
+        }.sorted { $0.1 > $1.1 }
+
+        let keepSet = Set(protected.map { $0.standardizedFileURL })
+            .union(dated.prefix(limit).map { $0.0.standardizedFileURL })
+        for (u, _) in dated where !keepSet.contains(u.standardizedFileURL) {
+            try? fm.removeItem(at: u)
+        }
+    }
+}
+
 // MARK: - 传输 Tab：车机屏幕截图 + 上传 + 下载队列
 
 struct TransferTabView: View {
@@ -153,7 +225,7 @@ struct TransferTabView: View {
         } header: {
             Text("车机屏幕")
         } footer: {
-            Text("车机现场截屏后直接把图片回传手机，不在车机留存。截图只在这里预览，需要时点「保存到相册」。车机端 1.1.29+ 支持。")
+            Text("车机现场截屏后直接把图片回传手机，不在车机留存；手机端临时图只保留最近几张，自动连拍不会占满存储。截图只在这里预览，需要时点「保存到相册」。车机端 1.1.29+ 支持。")
         }
     }
 
@@ -262,9 +334,8 @@ struct TransferTabView: View {
             throw NSError(domain: "CarLink", code: -2,
                           userInfo: [NSLocalizedDescriptionKey: "车机返回的不是有效图片"])
         }
-        let name = "carlink-screen-\(Int(Date().timeIntervalSince1970)).png"
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
-        try cap.data.write(to: url)
+        // 统一交给临时文件管理器：只保留最近几张，连拍不会撑爆手机存储
+        let url = try ScreenShotTempStore.shared.write(cap.data)
         return ScreenShotResult(image: img,
                                 source: cap.source,
                                 ms: cap.ms,
@@ -659,6 +730,8 @@ private struct ScreenShotFullscreen: View {
         }
         .onDisappear {
             stopAuto()
+            // 连拍/重截期间产生的临时图只留当前展示这张，退出后结果卡还要用它分享、存相册
+            ScreenShotTempStore.shared.trim(keeping: [display.fileURL], keep: 1)
             OrientationLock.shared.set(.portrait)
         }
     }
@@ -940,6 +1013,8 @@ private struct ScreenShotFullscreen: View {
         autoSeconds = 0
         autoNextAt = nil
         autoSession += 1           // 让在途的连拍循环立刻退出
+        // 停止后不再产生新图，收紧保留窗口
+        ScreenShotTempStore.shared.trim(keeping: [display.fileURL], keep: 2)
     }
 
     /// .task(id:) 驱动：id 变化或视图消失会自动 cancel 上一轮，不留后台定时器
