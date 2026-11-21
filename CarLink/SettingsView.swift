@@ -256,8 +256,24 @@ struct SettingsView: View {
         Section {
             Toggle("下载后保存到系统相册", isOn: $settings.saveToPhotos)
             Toggle("仅 WiFi 下下载", isOn: $settings.wifiOnlyDownload)
+                .onChange(of: settings.wifiOnlyDownload) { _ in
+                    settings.refreshDownloadGate()
+                    downloads.reschedule()
+                }
+            Toggle("VPN 隧道下允许下载", isOn: $settings.allowVpnDownload)
+                .onChange(of: settings.allowVpnDownload) { _ in
+                    settings.refreshDownloadGate()
+                    downloads.reschedule()
+                }
 
-            if settings.wifiOnlyDownload && !settings.isWiFi {
+            if settings.isVpnActive {
+                Label(settings.allowVpnDownload
+                      ? "已检测到 VPN 隧道，下载任务可继续"
+                      : "已检测到 VPN 隧道，但下载被设置拦截",
+                      systemImage: settings.allowVpnDownload ? "lock.shield" : "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(settings.allowVpnDownload ? Color.green : Color.orange)
+            } else if settings.wifiOnlyDownload && !settings.isWiFi {
                 Label("当前不在 WiFi 网络，下载任务将等待", systemImage: "exclamationmark.triangle")
                     .font(.caption)
                     .foregroundStyle(.orange)
@@ -285,7 +301,7 @@ struct SettingsView: View {
         } header: {
             Text("下载与保存")
         } footer: {
-            Text("车机 CPU 与 WiFi 带宽都有限：播放视频时会自动挂起下载任务（退出播放后按断点续传继续），并发数调小也能让播放和下载都更稳。相册保存位置：系统相册 ›「CarLink 车机互传」相簿；转存失败的 .ts 回退文件位于「文件」App › CarLink。")
+            Text("车机 CPU 与 WiFi 带宽都有限：播放视频时会自动挂起下载任务（退出播放后按断点续传继续），并发数调小也能让播放和下载都更稳。相册保存位置：系统相册 ›「CarLink 车机互传」相簿；转存失败的 .ts 回退文件位于「文件」App › CarLink。通过 WireGuard 等 VPN 远程连车机时，开启「VPN 隧道下允许下载」可在蜂窝网络下继续传输（流量仍走手机蜂窝，注意套餐）。")
         }
     }
 

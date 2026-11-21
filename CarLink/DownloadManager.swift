@@ -250,8 +250,8 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
         self.library = library
         self.settings = settings
         DownloadEngine.shared.owner = self
-        // 网络变化（回到 WiFi）时自动续跑排队任务
-        netCancellable = settings.$isWiFi
+        // 网络变化（回到 WiFi / VPN 隧道建立）时自动续跑排队任务
+        netCancellable = settings.$downloadGate
             .dropFirst()
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.pump() }
@@ -358,8 +358,8 @@ final class DownloadManager: ObservableObject, DownloadEngineDelegate {
     // MARK: - 调度
 
     private func pump() {
-        // 仅 WiFi 下载：不在 WiFi 时保持排队
-        if settings?.wifiOnlyDownload == true, settings?.isWiFi == false { return }
+        // 仅 WiFi 下载：非 WiFi 且未放行 VPN 隧道时保持排队
+        if settings?.canDownload == false { return }
         // 播放中：不启动新任务（正在跑的在 beginPlayback 里已挂起）
         if playbackDepth > 0, settings?.pauseDownloadDuringPlayback != false { return }
         let cap = effectiveMaxConcurrent

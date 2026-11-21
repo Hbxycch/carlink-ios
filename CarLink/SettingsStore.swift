@@ -68,6 +68,8 @@ enum MonitorSource: String, CaseIterable, Identifiable {
 final class SettingsStore: ObservableObject {
     /// 仅 WiFi 下载（避免蜂窝流量）
     @AppStorage("wifiOnlyDownload") var wifiOnlyDownload = true
+    /// VPN 隧道下允许下载：WireGuard 场景物理层可能仍是蜂窝，但属于用户主动发起的远程访问
+    @AppStorage("allowVpnDownload") var allowVpnDownload = true
     /// 下载默认存相册（关闭则存「文件」App › CarLink）
     @AppStorage("saveToPhotos") var saveToPhotos = true
     /// 相册页默认视图（false=缩略图 2 列，true=列表）
@@ -97,19 +99,34 @@ final class SettingsStore: ObservableObject {
 
     /// 网络类型监测（供下载调度订阅）
     @Published var isWiFi = true
+    /// 是否检测到 VPN 隧道接口（WireGuard 在 iOS 上表现为 utun）
+    @Published var isVpnActive = false
+    /// 下载门禁合计结果：单一发布源，网络或开关变化时驱动队列续跑
+    @Published var downloadGate = true
     private let monitor = NWPathMonitor()
 
     func startMonitoring() {
         monitor.pathUpdateHandler = { [weak self] path in
             let wifi = path.usesInterfaceType(.wifi) || path.usesInterfaceType(.wiredEthernet)
+            let vpn = path.availableInterfaces.contains { iface in
+                iface.type == .other && iface.name.hasPrefix("utun")
+            }
             Task { @MainActor in
-                self?.isWiFi = wifi
+                guard let self else { return }
+                self.isWiFi = wifi
+                self.isVpnActive = vpn
+                self.downloadGate = self.canDownload
             }
         }
         monitor.start(queue: DispatchQueue(label: "carlink.pathmonitor"))
     }
 
+    /// 设置开关变化后手动刷新门禁（@AppStorage 不触发 @Published）
+    func refreshDownloadGate() {
+        downloadGate = canDownload
+    }
+
     var canDownload: Bool {
-        !wifiOnlyDownload || isWiFi
+        !wifiOnlyDownload || isWiFi || (allowVpnDownload && isVpnActive)
     }
 }

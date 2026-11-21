@@ -110,14 +110,14 @@ struct ConnectView: View {
                     .font(.caption)
             }
         } footer: {
-            Text("需手机与车机处于同一网络（连同一 WiFi，或手机连车机热点）。首次使用会请求本地网络权限。")
+            Text("需手机与车机处于同一网络（连同一 WiFi，或手机连车机热点）。首次使用会请求本地网络权限。通过 WireGuard 等 VPN 远程连接时组播不通，自动发现会一直为空，请在下方手动输入车机的 VPN 虚拟 IP。")
         }
     }
 
     private var manualSection: some View {
         Section {
             HStack {
-                TextField("车机 IP，如 192.168.43.1", text: $ipText)
+                TextField("IP 或 VPN 虚拟 IP，如 10.0.0.1", text: $ipText)
                     .keyboardType(.decimalPad)
                     .autocorrectionDisabled()
                 TextField("端口", text: $portText)
@@ -133,7 +133,7 @@ struct ConnectView: View {
         } header: {
             Text("手动输入")
         } footer: {
-            Text("在车机 App 主页查看 IP 与端口，也可扫车机上的二维码自动填入。")
+            Text("在车机 App 主页查看 IP 与端口，也可扫车机上的二维码自动填入。VPN 隧道下请填车机的 WireGuard 地址（如 10.0.0.1）；车机端 1.1.34+ 主页与二维码会优先显示该地址。")
         }
     }
 
