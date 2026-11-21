@@ -1,0 +1,9 @@
+{
+  "version": "1.0.25",
+  "build": "26",
+  "ipaUrl": "https://smartdash-ota.w.zood.org:8888/carlink/CarLink-v1.0.25-unsigned.ipa",
+  "size": 18553583,
+  "md5": "837cab931db78979e43101b3aa733a93",
+  "changelog": "feat(vpn): WireGuard 纯公网组网支持，VPN 隧道下允许下载并提示填写虚拟 IP (1.0.25(26))",
+  "date": "2026-11-21"
+}
